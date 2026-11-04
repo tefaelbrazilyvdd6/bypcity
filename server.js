@@ -340,10 +340,25 @@ app.get("/auth/google", (req, res, next) => {
 });
 
 app.get("/auth/google/callback",
-  passport.authenticate("google", { failureRedirect: "/login" }),
-  (req, res) => {
-    const next = req.query.state || "/tools";
-    res.redirect(next.startsWith("/") ? next : "/tools");
+  (req, res, next) => {
+    passport.authenticate("google", (err, user, info) => {
+      if (err) {
+        console.error("OAUTH ERROR:", err);
+        return res.status(500).send("Auth error: " + err.message);
+      }
+      if (!user) {
+        console.error("OAUTH NO USER:", info);
+        return res.redirect("/login?err=no-user");
+      }
+      req.logIn(user, (loginErr) => {
+        if (loginErr) {
+          console.error("LOGIN ERROR:", loginErr);
+          return res.status(500).send("Login error: " + loginErr.message);
+        }
+        const next = req.query.state || "/tools";
+        res.redirect(next.startsWith("/") ? next : "/tools");
+      });
+    })(req, res, next);
   }
 );
 
