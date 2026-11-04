@@ -41,9 +41,9 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com"],
-      frameSrc: ["https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com"],
-      imgSrc: ["'self'", "data:", "https:", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
+      frameSrc: ["https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
+      imgSrc: ["'self'", "data:", "https:", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
     },
   },
 }));
@@ -192,7 +192,7 @@ function safeRedirect(url) {
 // PAGES — HTML inline
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// ── Hilltop Ads ───────────────────────────────────────────────
+// ── Hilltop Ads — Banner 300x250 ─────────────────────────────
 const HILLTOP_AD = `<script>
 (function(gnnj){
 var d = document,
@@ -200,6 +200,20 @@ var d = document,
     l = d.currentScript || d.scripts[d.scripts.length - 1];
 s.settings = gnnj || {};
 s.src = "\/\/unfoldedtrade.com\/bdXXV\/s.duGklk0\/YaWAcT\/DeimF9cu\/ZOU_lAkxPHTtc-1OOwTAYYyNM\/jbEEtGNDzdUh5\/Ntj\/IQyzN\/QK";
+s.async = true;
+s.referrerPolicy = 'no-referrer-when-downgrade';
+l.parentNode.insertBefore(s, l);
+})({})
+<\/script>`;
+
+// ── Hilltop Ads — Popunder ───────────────────────────────────
+const HILLTOP_POPUNDER = `<script>
+(function(hvt){
+var d = document,
+    s = d.createElement('script'),
+    l = d.currentScript || d.scripts[d.scripts.length - 1];
+s.settings = hvt || {};
+s.src = "\/\/unfolded-uncle.com\/ceD\/9.6\/bD2m5QlxSyW\/Qp9fNTzJU\/5lNmjHIS2\/MbS\/0w3PNRTSk\/2GMMjMY\/1q";
 s.async = true;
 s.referrerPolicy = 'no-referrer-when-downgrade';
 l.parentNode.insertBefore(s, l);
@@ -309,7 +323,7 @@ function page(title, body, user = null) {
     <meta property="og:description" content="Scripts, sources, bots, and tools — all in one place. Free forever.">
     <meta property="og:image" content="/logo.png">
     <meta property="og:type" content="website">${CSS}
-  </head><body>${nav(user)}${body}</body></html>`;
+  </head><body>${nav(user)}${body}${HILLTOP_POPUNDER}</body></html>`;
 }
 
 function catIcon(cat) {
