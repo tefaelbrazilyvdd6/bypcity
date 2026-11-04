@@ -36,13 +36,14 @@ function isAdminUser(user) {
 
 // ── Security ────────────────────────────────────────────────
 app.set("trust proxy", 1);
+app.use(express.static("public"));
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com"],
-      frameSrc: ["https://challenges.cloudflare.com"],
-      imgSrc: ["'self'", "data:", "https:"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com"],
+      frameSrc: ["https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com"],
+      imgSrc: ["'self'", "data:", "https:", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com"],
     },
   },
 }));
@@ -191,6 +192,20 @@ function safeRedirect(url) {
 // PAGES — HTML inline
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+// ── Hilltop Ads ───────────────────────────────────────────────
+const HILLTOP_AD = `<script>
+(function(gnnj){
+var d = document,
+    s = d.createElement('script'),
+    l = d.currentScript || d.scripts[d.scripts.length - 1];
+s.settings = gnnj || {};
+s.src = "\/\/unfoldedtrade.com\/bdXXV\/s.duGklk0\/YaWAcT\/DeimF9cu\/ZOU_lAkxPHTtc-1OOwTAYYyNM\/jbEEtGNDzdUh5\/Ntj\/IQyzN\/QK";
+s.async = true;
+s.referrerPolicy = 'no-referrer-when-downgrade';
+l.parentNode.insertBefore(s, l);
+})({})
+<\/script>`;
+
 const CSS = `
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -288,7 +303,12 @@ function nav(user) {
 function page(title, body, user = null) {
   return `<!DOCTYPE html><html lang="en"><head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>${escHtml(title)} — BypassCity</title>${CSS}
+    <title>${escHtml(title)} — BypassCity</title>
+    <link rel="icon" type="image/png" href="/logo.png">
+    <meta property="og:title" content="${escHtml(title)} — BypassCity">
+    <meta property="og:description" content="Scripts, sources, bots, and tools — all in one place. Free forever.">
+    <meta property="og:image" content="/logo.png">
+    <meta property="og:type" content="website">${CSS}
   </head><body>${nav(user)}${body}</body></html>`;
 }
 
@@ -348,7 +368,7 @@ app.get("/", (req, res) => {
     </div>
     <div class="ad-slot">
       <div class="ad-lbl">ADVERTISEMENT</div>
-      <div class="ad-blk" id="hilltop-home"><!-- HilltopAds --></div>
+      ${HILLTOP_AD}
     </div>
   `, req.user));
 });
@@ -444,7 +464,7 @@ app.get("/tools", requireAuth, async (req, res) => {
     res.send(page("Tools", `
       <div class="ad-slot">
         <div class="ad-lbl">ADVERTISEMENT</div>
-        <div class="ad-blk" id="ht-top"><!-- HilltopAds --></div>
+        ${HILLTOP_AD}
       </div>
       <form class="search-bar" method="GET" action="/tools">
         <input type="text" name="q" value="${escHtml(q)}" placeholder="search tools..." style="flex:1" maxlength="100">
@@ -455,7 +475,7 @@ app.get("/tools", requireAuth, async (req, res) => {
       <div class="files-grid">${fileCards}</div>
       <div class="ad-slot">
         <div class="ad-lbl">ADVERTISEMENT</div>
-        <div class="ad-blk" id="ht-bottom"><!-- HilltopAds --></div>
+        ${HILLTOP_AD}
       </div>
     `, req.user));
   } catch (e) {
@@ -477,7 +497,7 @@ app.get("/tools/:id", requireAuth, async (req, res) => {
     res.send(page(f.name, `
       <div class="ad-slot">
         <div class="ad-lbl">ADVERTISEMENT</div>
-        <div class="ad-blk" id="ht-dl-top"><!-- HilltopAds --></div>
+        ${HILLTOP_AD}
       </div>
       <div class="card">
         <h2>${escHtml(f.name)}</h2>
@@ -497,7 +517,7 @@ app.get("/tools/:id", requireAuth, async (req, res) => {
       </div>
       <div class="ad-slot">
         <div class="ad-lbl">ADVERTISEMENT</div>
-        <div class="ad-blk" id="ht-dl-bot"><!-- HilltopAds 300x250 --></div>
+        ${HILLTOP_AD}
       </div>
 
       <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
