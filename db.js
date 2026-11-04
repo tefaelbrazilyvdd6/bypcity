@@ -46,7 +46,6 @@ await db.execute(`
   )
 `);
 
-// helpers — same API shape as before but async
 export async function getUser(id) {
   const r = await db.execute({ sql: `SELECT * FROM users WHERE id = ?`, args: [id] });
   return r.rows[0] ?? null;
@@ -77,21 +76,34 @@ export async function listFiles(limit, offset) {
   return r.rows;
 }
 
-export async function searchFiles(q, limit, offset) {
+// Fixed: q and cat are separate params; cat="" means no category filter
+export async function searchFiles(q, cat, limit, offset) {
   const like = `%${q}%`;
   const r = await db.execute({
     sql: `SELECT f.*, (SELECT COUNT(*) FROM downloads d WHERE d.file_id = f.id) as dl_count
           FROM files f WHERE f.published = 1
-          AND (f.name LIKE ? OR f.description LIKE ? OR f.category = ?)
+          AND (f.name LIKE ? OR f.description LIKE ?)
+          AND (? = '' OR f.category = ?)
           ORDER BY f.created_at DESC LIMIT ? OFFSET ?`,
-    args: [like, like, q, limit, offset],
+    args: [like, like, cat, cat, limit, offset],
   });
   return r.rows;
 }
 
+// Only published files (for users)
 export async function getFile(id) {
   const r = await db.execute({
-    sql: `SELECT * FROM files WHERE id = ? AND published = 1`,
+    sql: `SELECT f.*, (SELECT COUNT(*) FROM downloads d WHERE d.file_id = f.id) as dl_count
+          FROM files f WHERE f.id = ? AND f.published = 1`,
+    args: [id],
+  });
+  return r.rows[0] ?? null;
+}
+
+// Any file regardless of published (for admin toggle/delete)
+export async function getFileAdmin(id) {
+  const r = await db.execute({
+    sql: `SELECT * FROM files WHERE id = ?`,
     args: [id],
   });
   return r.rows[0] ?? null;
@@ -114,7 +126,6 @@ export async function insertFile({ id, name, description, filename, mimetype, si
 }
 
 export async function deleteFile(id) {
-  // delete from cloudinary first — handled in server.js
   await db.execute({ sql: `DELETE FROM files WHERE id = ?`, args: [id] });
 }
 
