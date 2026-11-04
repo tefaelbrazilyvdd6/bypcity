@@ -28,6 +28,16 @@ cloudinary.config({
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+
+function isAdminUser(user) {
+  if (!user) return false;
+
+  const email = String(user.email || "").trim().toLowerCase();
+
+  return user.role === "admin" ||
+    (ADMIN_EMAIL !== "" && email === ADMIN_EMAIL);
+}
 
 // ── Security ────────────────────────────────────────────────
 app.set("trust proxy", 1);
@@ -91,7 +101,7 @@ const requireAuth = (req, res, next) => {
   res.redirect("/login?next=" + encodeURIComponent(req.path));
 };
 const requireAdmin = (req, res, next) => {
-  if (req.isAuthenticated() && req.user?.role === "admin") return next();
+  if (req.isAuthenticated() && isAdminUser(req.user)) return next();
   res.status(403).json({ error: "Forbidden" });
 };
 
@@ -233,7 +243,7 @@ function nav(user) {
     <div class="nav-r">
       <a href="https://t.me/yocnd" target="_blank" class="btn btn-g">✈ t.me/yocnd</a>
       ${user
-        ? `<a href="/tools" class="btn">Tools</a>${user.role==="admin"?`<a href="/admin" class="btn">Admin</a>`:""}<a href="/logout" class="btn btn-g">Logout</a>`
+        ? `<a href="/tools" class="btn">Tools</a>${isAdminUser(user)?`<a href="/admin" class="btn">Admin</a>`:""}<a href="/logout" class="btn btn-g">Logout</a>`
         : `<a href="/login" class="btn">Sign in</a>`}
     </div>
   </nav>`;
