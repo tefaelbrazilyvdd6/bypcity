@@ -7,8 +7,8 @@ import multer from "multer";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { randomUUID } from "crypto";
-import { mkdirSync, existsSync, readFileSync, unlinkSync } from "fs";
-import { join, extname } from "path";
+import { v2 as cloudinary } from "cloudinary";
+import streamifier from "streamifier";
 import { createRequire } from "module";
 
 import {
@@ -19,10 +19,15 @@ import {
 
 const require = createRequire(import.meta.url);
 
+// ── Cloudinary config ────────────────────────────────────────
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 const app = express();
 const PORT = process.env.PORT || 3000;
-const UPLOAD_DIR = process.env.DATA_DIR ? join(process.env.DATA_DIR, "uploads") : "./data/uploads";
-mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // ── Security ────────────────────────────────────────────────
 app.set("trust proxy", 1);
@@ -90,20 +95,33 @@ const requireAdmin = (req, res, next) => {
   res.status(403).json({ error: "Forbidden" });
 };
 
-// ── Multer ───────────────────────────────────────────────────
-const ALLOWED = new Set(["application/zip","application/x-zip-compressed",
-  "application/octet-stream","text/plain","text/x-python","text/x-lua",
-  "text/javascript","application/x-msdownload"]);
-
-const storage = multer.diskStorage({
-  destination: UPLOAD_DIR,
-  filename: (_, file, cb) => cb(null, randomUUID() + extname(file.originalname)),
-});
+// ── Multer (memory storage — upload buffer to Cloudinary) ────
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_, file, cb) => cb(null, true),
 });
+
+// ── Upload buffer to Cloudinary ──────────────────────────────
+function uploadToCloudinary(buffer, originalname) {
+  return new Promise((resolve, reject) => {
+    const publicId = randomUUID();
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        public_id: publicId,
+        resource_type: "raw",
+        use_filename: false,
+        unique_filename: false,
+        overwrite: false,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve({ publicId, url: result.secure_url });
+      }
+    );
+    streamifier.createReadStream(buffer).pipe(stream);
+  });
+}
 
 // ── Turnstile verify ─────────────────────────────────────────
 async function verifyTurnstile(token, ip) {
@@ -453,7 +471,7 @@ app.get("/tools/:id", requireAuth, (req, res) => {
   `, req.user));
 });
 
-// DOWNLOAD API
+// DOWNLOAD API — proxy file from Cloudinary
 app.post("/api/download/:id", dlLimiter, requireAuth, async (req, res) => {
   const { token } = req.body;
   const ip = getIp(req);
@@ -464,16 +482,24 @@ app.post("/api/download/:id", dlLimiter, requireAuth, async (req, res) => {
   const f = getFile.get(req.params.id);
   if (!f) return res.status(404).json({ error: "Not found" });
 
-  const filePath = join(UPLOAD_DIR, f.filename);
-  if (!existsSync(filePath)) return res.status(500).json({ error: "File missing" });
-
   logDownload.run(randomUUID(), f.id, req.user.id, ip);
 
-  res.setHeader("Content-Type", f.mimetype);
-  res.setHeader("Content-Disposition", `attachment; filename="${f.name}"`);
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  const { createReadStream } = await import("fs");
-  createReadStream(filePath).pipe(res);
+  // Stream file from Cloudinary to client
+  try {
+    const cloudUrl = cloudinary.url(f.filename, { resource_type: "raw", secure: true });
+    const upstream = await fetch(cloudUrl);
+    if (!upstream.ok) return res.status(500).json({ error: "File unavailable" });
+
+    res.setHeader("Content-Type", f.mimetype || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${f.name}"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+
+    const { Readable } = await import("stream");
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Download failed" });
+  }
 });
 
 // ── ADMIN ─────────────────────────────────────────────────────
@@ -533,28 +559,40 @@ app.get("/admin", requireAdmin, (req, res) => {
   `, req.user));
 });
 
-app.post("/admin/upload", requireAdmin, upload.single("file"), (req, res) => {
+// UPLOAD — stream buffer to Cloudinary
+app.post("/admin/upload", requireAdmin, upload.single("file"), async (req, res) => {
   if (!req.file) return res.redirect("/admin?err=no-file");
   const { name, description, category, tags } = req.body;
-  const tagArr = tags ? tags.split(",").map(t => t.trim()).filter(Boolean) : [];
-  insertFile.run({
-    id: randomUUID(),
-    name: name.slice(0, 200),
-    description: description?.slice(0, 1000) || null,
-    filename: req.file.filename,
-    mimetype: req.file.mimetype || "application/octet-stream",
-    size: req.file.size,
-    category: category || "OTHER",
-    tags: JSON.stringify(tagArr),
-  });
-  res.redirect("/admin");
+
+  try {
+    const { publicId } = await uploadToCloudinary(req.file.buffer, req.file.originalname);
+    const tagArr = tags ? tags.split(",").map(t => t.trim()).filter(Boolean) : [];
+    insertFile.run({
+      id: randomUUID(),
+      name: name.slice(0, 200),
+      description: description?.slice(0, 1000) || null,
+      filename: publicId,                           // store Cloudinary public_id
+      mimetype: req.file.mimetype || "application/octet-stream",
+      size: req.file.size,
+      category: category || "OTHER",
+      tags: JSON.stringify(tagArr),
+    });
+    res.redirect("/admin");
+  } catch (e) {
+    console.error(e);
+    res.redirect("/admin?err=upload-failed");
+  }
 });
 
-app.post("/admin/delete/:id", requireAdmin, (req, res) => {
+// DELETE — remove from Cloudinary + DB
+app.post("/admin/delete/:id", requireAdmin, async (req, res) => {
   const f = db.prepare("SELECT filename FROM files WHERE id=?").get(req.params.id);
   if (f) {
-    const fp = join(UPLOAD_DIR, f.filename);
-    if (existsSync(fp)) unlinkSync(fp);
+    try {
+      await cloudinary.uploader.destroy(f.filename, { resource_type: "raw" });
+    } catch (e) {
+      console.error("Cloudinary delete error:", e);
+    }
     deleteFile.run(req.params.id);
   }
   res.redirect("/admin");
