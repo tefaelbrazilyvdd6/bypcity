@@ -653,11 +653,11 @@ app.get("/admin", requireAdmin, async (req, res) => {
           <form method="POST" action="/admin/upload" enctype="multipart/form-data"
             style="background:#111;border:1px solid #1f1f1f;padding:16px;margin-bottom:16px">
             <div class="section-lbl">UPLOAD FILE</div>
-            <div class="up-zone" onclick="document.getElementById('fi').click()">
-              <input type="file" name="file" id="fi" required style="display:none" onchange="document.getElementById('fn').textContent=this.files[0]?.name||''">
+            <label for="fi" class="up-zone" style="cursor:pointer;display:block">
+              <input type="file" name="file" id="fi" required style="position:absolute;opacity:0;width:0;height:0" onchange="document.getElementById('fn').textContent=this.files[0]?.name||'Click to choose file'">
               <strong id="fn">Click to choose file</strong>
               <p>ZIP, EXE, LUA, PY, DLL — max 50MB</p>
-            </div>
+            </label>
             <input type="text" name="name" placeholder="Display name *" required maxlength="200" style="margin-bottom:8px">
             <textarea name="description" placeholder="Description (optional)" rows="2" maxlength="1000" style="margin-bottom:8px;resize:none"></textarea>
             <select name="category" style="margin-bottom:8px;width:100%">
