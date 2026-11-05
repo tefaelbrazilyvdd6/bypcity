@@ -1612,18 +1612,7 @@ app.get("/admin", requireAdmin, async (req, res) => {
             <div class="a-section-lbl">Upload file</div>
             <form method="POST" action="/admin/upload" enctype="multipart/form-data" id="upload-form">
               <label class="up-zone" id="up-zone-label">
-                <input type="file" name="file" id="fi" required
-                  onchange="
-                    var z=document.getElementById('up-zone-label');
-                    var nm=document.getElementById('fn');
-                    if(this.files&&this.files[0]){
-                      nm.textContent=this.files[0].name;
-                      z.classList.add('has-file');
-                    } else {
-                      nm.textContent='';
-                      z.classList.remove('has-file');
-                    }
-                  ">
+                <input type="file" name="file" id="fi" required>
                 <div class="up-zone-inner">
                   <div class="up-zone-icon">📂</div>
                   <div class="default-hint">
@@ -1651,6 +1640,19 @@ app.get("/admin", requireAdmin, async (req, res) => {
           </div>
         </div>
       </div>
+      <script>
+        document.getElementById('fi').addEventListener('change', function() {
+          var z = document.getElementById('up-zone-label');
+          var nm = document.getElementById('fn');
+          if (this.files && this.files[0]) {
+            nm.textContent = this.files[0].name;
+            z.classList.add('has-file');
+          } else {
+            nm.textContent = '';
+            z.classList.remove('has-file');
+          }
+        });
+      </script>
     `, req.user));
   } catch (e) {
     console.error(e);
