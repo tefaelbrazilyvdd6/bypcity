@@ -1065,6 +1065,67 @@ select{padding:10px 14px;cursor:pointer}
   flex-shrink:0;
 }
 
+/* ── Hamburger / Mobile Menu ── */
+.nav-hamburger{
+  display:none;
+  width:36px;height:36px;
+  border:1.5px solid var(--border2);
+  background:transparent;
+  border-radius:var(--radius-sm);
+  cursor:pointer;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  gap:5px;
+  padding:0;
+  flex-shrink:0;
+  transition:border-color .15s,background .15s;
+}
+.nav-hamburger:hover{border-color:var(--txt2);background:var(--surface)}
+.nav-hamburger span{
+  display:block;
+  width:16px;height:1.5px;
+  background:var(--txt);
+  border-radius:2px;
+  transition:all .2s;
+}
+.nav-hamburger.open span:nth-child(1){transform:translateY(6.5px) rotate(45deg)}
+.nav-hamburger.open span:nth-child(2){opacity:0;transform:scaleX(0)}
+.nav-hamburger.open span:nth-child(3){transform:translateY(-6.5px) rotate(-45deg)}
+
+.mobile-menu{
+  display:none;
+  position:fixed;
+  top:60px;left:0;right:0;
+  background:rgba(255,255,255,.97);
+  backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+  border-bottom:1.5px solid var(--border);
+  z-index:99;
+  padding:12px 16px 20px;
+  flex-direction:column;
+  gap:4px;
+  box-shadow:0 8px 32px rgba(17,17,17,.08);
+}
+.mobile-menu.open{display:flex}
+.mob-link{
+  font-size:14px;
+  font-weight:600;
+  color:var(--txt2);
+  padding:11px 14px;
+  border-radius:var(--radius-sm);
+  transition:color .15s,background .15s;
+  letter-spacing:-.01em;
+}
+.mob-link:hover{color:var(--txt);background:var(--surface)}
+.mob-link.active{color:var(--dark);background:var(--lime)}
+.mob-divider{height:1px;background:var(--border);margin:8px 0}
+.mob-btn-row{display:flex;gap:8px;padding:4px 0}
+.mob-btn-row .btn-lime,.mob-btn-row .btn-dark,.mob-btn-row .btn-nav{
+  flex:1;text-align:center;justify-content:center;
+  padding:11px 12px;font-size:13px;
+}
+
 /* ── Responsive ── */
 @media(max-width:1024px){
   .files-grid{grid-template-columns:repeat(3,1fr)}
@@ -1072,6 +1133,8 @@ select{padding:10px 14px;cursor:pointer}
 }
 @media(max-width:768px){
   nav{padding:0 16px}
+  .nav-r{display:none}
+  .nav-hamburger{display:flex}
   .hero{grid-template-columns:1fr;gap:36px;padding:48px 20px 40px}
   .hero-right{display:none}
   .files-grid{grid-template-columns:repeat(2,1fr);gap:12px}
@@ -1101,6 +1164,18 @@ select{padding:10px 14px;cursor:pointer}
 </style>`;
 
 function nav(user, activePage = "") {
+  const mobileAuthLinks = user
+    ? `<div class="mob-divider"></div>
+       <div class="mob-btn-row">
+         <a href="/tools" class="btn-dark">⚡ Tools</a>
+         ${isAdminUser(user) ? `<a href="/admin" class="btn-nav">Admin</a>` : ""}
+         <a href="/logout" class="btn-nav">Logout</a>
+       </div>`
+    : `<div class="mob-divider"></div>
+       <div class="mob-btn-row">
+         <a href="/login" class="btn-lime">Sign in →</a>
+       </div>`;
+
   return `<nav>
     <a href="/" class="logo">
       <div class="logo-mark">
@@ -1123,7 +1198,38 @@ function nav(user, activePage = "") {
         ? `<a href="/tools" class="btn-dark">⚡ Tools</a>${isAdminUser(user)?`<a href="/admin" class="btn-nav">Admin</a>`:""}<a href="/logout" class="btn-nav">Logout</a>`
         : `<a href="/login" class="btn-lime">Sign in</a>`}
     </div>
-  </nav>`;
+    <button class="nav-hamburger" id="nav-hbg" aria-label="Menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+  </nav>
+  <div class="mobile-menu" id="mobile-menu">
+    <a href="/" class="mob-link ${activePage==="home"?"active":""}">Home</a>
+    <a href="/tools" class="mob-link ${activePage==="tools"?"active":""}">⚡ Tools</a>
+    <a href="https://t.me/yocnd" target="_blank" rel="noopener noreferrer" class="mob-link">✈ Telegram</a>
+    <a href="/" class="mob-link">About</a>
+    ${mobileAuthLinks}
+  </div>
+  <script>
+    (function(){
+      var btn = document.getElementById('nav-hbg');
+      var menu = document.getElementById('mobile-menu');
+      if(!btn||!menu) return;
+      btn.addEventListener('click', function(){
+        var open = menu.classList.toggle('open');
+        btn.classList.toggle('open', open);
+        btn.setAttribute('aria-expanded', open);
+        document.body.style.overflow = open ? 'hidden' : '';
+      });
+      menu.querySelectorAll('a').forEach(function(a){
+        a.addEventListener('click', function(){
+          menu.classList.remove('open');
+          btn.classList.remove('open');
+          btn.setAttribute('aria-expanded','false');
+          document.body.style.overflow = '';
+        });
+      });
+    })();
+  </script>`;
 }
 
 function page(title, body, user = null, activePage = "") {
