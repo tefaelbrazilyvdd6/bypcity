@@ -1825,6 +1825,11 @@ app.post("/admin/toggle/:id", requireAdmin, async (req, res) => {
   res.redirect("/admin");
 });
 
+// ── Health check (cron-job keep-alive) ───────────────────────
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 // 404
 app.use((req, res) => res.status(404).send(page("404", `
   <div style="padding:80px 24px;text-align:center">
