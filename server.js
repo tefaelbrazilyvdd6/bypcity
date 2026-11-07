@@ -1442,9 +1442,28 @@ app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
     const data = { ...req.query };
     delete data.next;
 
-    if (!verifyTelegramAuth(data)) {
-      console.error("TG VERIFY FAILED:", JSON.stringify(data));
-      return res.redirect("/login?err=telegram_invalid");
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const hasBotToken = !!botToken;
+    const tokenPreview = botToken ? botToken.slice(0, 10) + "..." : "MISSING";
+
+    // Recompute hash for debug
+    const { hash, ...fields } = data;
+    const checkString = Object.keys(fields).sort().map(k => `${k}=${fields[k]}`).join("\n");
+    const secretKey = createHash("sha256").update(botToken || "").digest();
+    const computedHmac = createHmac("sha256", secretKey).update(checkString).digest("hex");
+    const hashMatch = computedHmac === hash;
+    const authAge = Date.now() / 1000 - Number(fields.auth_date);
+
+    console.log("TG CALLBACK:", { hasBotToken, tokenPreview, hashMatch, authAge, fields: Object.keys(fields), hash: hash?.slice(0,10) });
+
+    if (!hasBotToken) {
+      return res.send(`<pre>ERROR: TELEGRAM_BOT_TOKEN is not set in environment</pre>`);
+    }
+    if (!hashMatch) {
+      return res.send(`<pre>ERROR: Hash mismatch\nComputed: ${computedHmac}\nReceived: ${hash}\nCheck string:\n${checkString}\nToken starts with: ${tokenPreview}</pre>`);
+    }
+    if (authAge > 86400) {
+      return res.send(`<pre>ERROR: Auth too old (${Math.round(authAge)}s)</pre>`);
     }
 
     const existing = await getUserByTelegram(data.id);
@@ -1452,27 +1471,24 @@ app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
 
     await upsertTelegramUser({
       id,
-      telegram_id: data.id,
-      name: [data.first_name, data.last_name].filter(Boolean).join(" "),
-      avatar: data.photo_url || "",
+      telegram_id: fields.id,
+      name: [fields.first_name, fields.last_name].filter(Boolean).join(" "),
+      avatar: fields.photo_url || "",
     });
 
     const user = await getUser(id);
-    if (!user) {
-      console.error("TG: user not found after upsert, id:", id);
-      return res.redirect("/login?err=telegram_user_missing");
-    }
+    if (!user) return res.send(`<pre>ERROR: user not found after upsert, id=${id}</pre>`);
 
     req.logIn(user, (err) => {
       if (err) {
         console.error("TG LOGIN ERROR:", err);
-        return res.redirect("/login?err=telegram_login_failed");
+        return res.send(`<pre>ERROR: logIn failed: ${err.message}</pre>`);
       }
       res.redirect("/tools");
     });
   } catch (e) {
     console.error("Telegram auth error:", e);
-    res.redirect("/login?err=telegram_error");
+    res.send(`<pre>ERROR: ${e.message}\n${e.stack}</pre>`);
   }
 });
 
