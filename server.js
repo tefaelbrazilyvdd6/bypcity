@@ -987,10 +987,6 @@ select{padding:10px 14px;cursor:pointer}
 }
 .a-upload-btn:hover{background:var(--dark2)}
 
-/* ── Telegram widget iframe fix ── */
-#tg-widget-wrap{background:var(--bg);clip-path:inset(5px 0px)}
-#tg-widget-wrap iframe{display:block!important}
-
 /* ── Login ── */
 .login-wrap{
   min-height:calc(100vh - 60px);
@@ -1427,7 +1423,7 @@ app.get("/login", (req, res) => {
           <span style="font-size:11px;color:var(--txt3)">or</span>
           <div style="flex:1;height:1px;background:var(--border)"></div>
         </div>
-        <div id="tg-widget-wrap" style="width:100%;display:flex;justify-content:center">
+        <div id="tg-widget-wrap" style="width:100%;display:flex;justify-content:center;min-height:48px">
           <script async src="https://telegram.org/js/telegram-widget.js?22"
             data-telegram-login="${escHtml(process.env.TELEGRAM_BOT_USERNAME || 'BypassCityBot')}"
             data-size="large"
@@ -1443,38 +1439,7 @@ app.get("/login", (req, res) => {
 });
 
 // TELEGRAM AUTH CALLBACK
-// Telegram now sends auth data as #tgAuthResult=base64 (fragment) instead of query params.
-// Fragments never reach the server, so we serve a tiny JS bridge that reads the fragment
-// and POSTs the parsed data to /auth/telegram/verify.
-app.get("/auth/telegram/callback", (req, res) => {
-  // Old format still works (query params present)
-  if (req.query.hash) return handleTelegramCallback(req, res);
-  // New format: data is in the URL fragment — serve a bridge page
-  res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>
-    <script>
-      try {
-        var frag = location.hash.replace(/^#/,'');
-        var params = new URLSearchParams(frag);
-        var raw = params.get('tgAuthResult');
-        if (!raw) throw new Error('no tgAuthResult');
-        var data = JSON.parse(atob(raw));
-        fetch('/auth/telegram/verify', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(data),
-          credentials:'same-origin'
-        }).then(function(r){ return r.json(); }).then(function(d){
-          location.href = d.redirect || '/tools';
-        }).catch(function(){ location.href='/login?err=tg_fetch_failed'; });
-      } catch(e) {
-        location.href = '/login?err=tg_parse_failed';
-      }
-    </script>
-    <p style="font-family:sans-serif;padding:40px;text-align:center;color:#555">Signing in…</p>
-  </body></html>`);
-});
-
-async function handleTelegramCallback(req, res) {
+app.get("/auth/telegram/callback", async (req, res) => {
   const data = { ...req.query };
   delete data.next;
   console.log("TG CALLBACK keys:", Object.keys(data));
@@ -1529,34 +1494,6 @@ async function handleTelegramCallback(req, res) {
       return res.redirect("/login?err=tg_login_failed&detail=" + encodeURIComponent(err.message));
     }
     res.redirect("/tools");
-  });
-}
-
-// TELEGRAM VERIFY — receives parsed tgAuthResult JSON from the bridge page
-app.post("/auth/telegram/verify", authLimiter, express.json({ limit: "10kb" }), async (req, res) => {
-  const data = req.body;
-  if (!data || !data.hash) return res.json({ redirect: "/login?err=tg_no_hash" });
-  if (!verifyTelegramAuth(data)) return res.json({ redirect: "/login?err=tg_verify_failed" });
-
-  let existing;
-  try { existing = await getUserByTelegram(data.id); } catch (e) {
-    return res.json({ redirect: "/login?err=tg_read_failed" });
-  }
-  const id = existing?.id || randomUUID();
-  try {
-    await upsertTelegramUser({
-      id, telegram_id: data.id,
-      name: [data.first_name, data.last_name].filter(Boolean).join(" "),
-      avatar: data.photo_url || "",
-    });
-  } catch (e) { return res.json({ redirect: "/login?err=tg_write_failed" }); }
-
-  const user = await getUser(id);
-  if (!user) return res.json({ redirect: "/login?err=tg_no_user" });
-
-  req.logIn(user, (err) => {
-    if (err) return res.json({ redirect: "/login?err=tg_login_failed" });
-    res.json({ redirect: "/tools" });
   });
 });
 
