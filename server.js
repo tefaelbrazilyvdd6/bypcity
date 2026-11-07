@@ -987,22 +987,12 @@ select{padding:10px 14px;cursor:pointer}
 
 /* ── Login ── */
 .login-wrap{
-  min-height:100vh;
+  min-height:calc(100vh - 60px);
   display:flex;
   align-items:center;
   justify-content:center;
   background:var(--bg);
   padding:16px;
-  position:relative;
-  overflow:hidden;
-}
-.login-wrap::before{
-  content:'';
-  position:absolute;
-  bottom:0;left:0;right:0;
-  height:40%;
-  background:var(--dark);
-  clip-path:polygon(0 40%,100% 0,100% 100%,0 100%);
 }
 .login-card{
   text-align:center;
@@ -1016,9 +1006,7 @@ select{padding:10px 14px;cursor:pointer}
   background:var(--bg);
   border:1.5px solid var(--border);
   border-radius:var(--radius-lg);
-  position:relative;
-  z-index:1;
-  box-shadow:0 20px 60px rgba(17,17,17,.1);
+  box-shadow:0 4px 24px rgba(17,17,17,.08);
 }
 .login-logo{
   font-size:22px;
@@ -1431,19 +1419,24 @@ app.get("/login", (req, res) => {
           <span style="font-size:11px;color:var(--txt3)">or</span>
           <div style="flex:1;height:1px;background:var(--brd)"></div>
         </div>
-        <div style="width:100%;display:flex;justify-content:center;background:transparent">
+        <div style="width:100%;display:flex;justify-content:center">
           <script async src="https://telegram.org/js/telegram-widget.js?22"
             data-telegram-login="BypassCityBot"
             data-size="large"
             data-userpic="false"
             data-radius="8"
-            data-auth-url="https://bypass-city.lol/auth/telegram/callback"
+            data-onauth="onTelegramAuth(user)"
             data-request-access="write">
           </script>
         </div>
-        <style>
-          iframe[src*="telegram.org"]{background:transparent!important;border:none!important;box-shadow:none!important}
-        </style>
+        <script>
+          function onTelegramAuth(user) {
+            var params = Object.keys(user).map(function(k){
+              return encodeURIComponent(k)+'='+encodeURIComponent(user[k]);
+            }).join('&');
+            window.location.href = '/auth/telegram/callback?' + params;
+          }
+        </script>
         <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
         <a href="/" style="font-size:12px;color:var(--txt2)">← Back to home</a>
       </div>
@@ -1458,7 +1451,7 @@ app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
     delete data.next;
 
     if (!verifyTelegramAuth(data)) {
-      console.error("TG AUTH FAILED, data:", data);
+      console.error("TG VERIFY FAILED:", JSON.stringify(data));
       return res.redirect("/login?err=telegram_invalid");
     }
 
