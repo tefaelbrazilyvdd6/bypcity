@@ -1427,15 +1427,10 @@ app.get("/login", (req, res) => {
           <script async src="https://telegram.org/js/telegram-widget.js?22"
             data-telegram-login="${escHtml(process.env.TELEGRAM_BOT_USERNAME || 'BypassCityBot')}"
             data-size="large"
-            data-onauth="onTelegramAuth(user)"
+            data-auth-url="${escHtml(`${req.protocol}://${req.get('host')}/auth/telegram/callback`)}"
             data-request-access="write">
           </script>
         </div>
-        <script>
-          function onTelegramAuth(user) {
-            window.location.href = '/auth/telegram/callback?' + new URLSearchParams(user).toString();
-          }
-        </script>
         <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
         <a href="/" style="font-size:12px;color:var(--txt2)">← Back to home</a>
       </div>
