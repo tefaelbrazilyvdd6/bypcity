@@ -1435,7 +1435,7 @@ app.get("/login", (req, res) => {
           <script async src="https://telegram.org/js/telegram-widget.js?22"
             data-telegram-login="BypassCityBot"
             data-size="large"
-            data-auth-url="https://bypass-city.lol/auth/telegram/callback?next=${encodeURIComponent(next)}"
+            data-auth-url="https://bypass-city.lol/auth/telegram/callback"
             data-request-access="write">
           </script>
         </div>
