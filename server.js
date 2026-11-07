@@ -38,6 +38,8 @@ function isAdminUser(user) {
 app.set("trust proxy", 1);
 app.use(express.static("public"));
 app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
