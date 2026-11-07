@@ -988,19 +988,8 @@ select{padding:10px 14px;cursor:pointer}
 .a-upload-btn:hover{background:var(--dark2)}
 
 /* ── Telegram widget iframe fix ── */
-#tg-widget-wrap{overflow:hidden;background:var(--bg);position:relative}
+#tg-widget-wrap{background:var(--bg);clip-path:inset(5px 0px)}
 #tg-widget-wrap iframe{display:block!important}
-#tg-widget-wrap::before,#tg-widget-wrap::after{
-  content:'';
-  position:absolute;
-  left:0;right:0;
-  height:12px;
-  background:var(--bg);
-  z-index:10;
-  pointer-events:none;
-}
-#tg-widget-wrap::before{top:0}
-#tg-widget-wrap::after{bottom:0}
 
 /* ── Login ── */
 .login-wrap{
