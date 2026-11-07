@@ -1386,9 +1386,9 @@ function verifyTelegramAuth(data) {
   const botToken = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
   if (!botToken) { console.error("TG: BOT TOKEN MISSING"); return false; }
   const { hash, ...fields } = data;
-  if (!hash) { console.error("TG: no hash"); return false; }
+  if (!hash) { console.error("TG: no hash in data"); return false; }
   const age = Date.now() / 1000 - Number(fields.auth_date);
-  if (age > 86400) { console.error("TG: too old", age); return false; }
+  if (age > 86400) { console.error("TG: auth too old", age); return false; }
   const checkString = Object.keys(fields).sort().map(k => `${k}=${fields[k]}`).join("\n");
   const secretKey = createHash("sha256").update(botToken).digest();
   const hmac = createHmac("sha256", secretKey).update(checkString).digest("hex");
@@ -1417,21 +1417,43 @@ app.get("/login", (req, res) => {
           </button>
         </a>
         <div style="display:flex;align-items:center;gap:10px;width:100%;margin:4px 0">
-          <div style="flex:1;height:1px;background:var(--brd)"></div>
+          <div style="flex:1;height:1px;background:var(--border)"></div>
           <span style="font-size:11px;color:var(--txt3)">or</span>
-          <div style="flex:1;height:1px;background:var(--brd)"></div>
+          <div style="flex:1;height:1px;background:var(--border)"></div>
         </div>
-        <div style="width:100%;max-width:300px;border-radius:8px;overflow:hidden;line-height:0">
-          <script async src="https://telegram.org/js/telegram-widget.js?22"
-            data-telegram-login="BypassCityBot"
-            data-size="large"
-            data-userpic="true"
-            data-radius="8"
-            data-auth-url="https://bypass-city.lol/auth/telegram/callback"
-            data-request-access="write">
-          </script>
+        <div style="width:100%;display:flex;justify-content:center">
+          <button id="tg-btn" onclick="doTelegramLogin()" style="display:flex;align-items:center;gap:11px;background:#2AABEE;color:#fff;border:none;padding:14px 24px;font-size:14px;font-weight:700;cursor:pointer;width:100%;max-width:300px;justify-content:center;border-radius:8px;transition:background .15s;letter-spacing:-.01em">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L8.48 14.617l-2.95-.924c-.642-.204-.657-.643.136-.953l11.527-4.448c.535-.194 1.003.131.37.956z"/></svg>
+            Continue with Telegram
+          </button>
         </div>
-        ${req.query.err ? `<p style="font-size:12px;color:var(--red);font-weight:600">Error: ${escHtml(req.query.err)}</p>` : ""}
+        <script src="https://telegram.org/js/telegram-widget.js?22" async></script>
+        <script>
+          function doTelegramLogin() {
+            var btn = document.getElementById('tg-btn');
+            btn.disabled = true;
+            btn.textContent = 'Opening Telegram...';
+            if (!window.Telegram || !window.Telegram.Login) {
+              setTimeout(doTelegramLogin, 500);
+              return;
+            }
+            window.Telegram.Login.auth(
+              { bot_id: '${((process.env.TELEGRAM_BOT_TOKEN || "").trim().split(":")[0])}', request_access: true },
+              function(data) {
+                if (!data) {
+                  btn.disabled = false;
+                  btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L8.48 14.617l-2.95-.924c-.642-.204-.657-.643.136-.953l11.527-4.448c.535-.194 1.003.131.37.956z"/></svg> Continue with Telegram';
+                  alert('Telegram auth failed or was cancelled');
+                  return;
+                }
+                var params = Object.keys(data).map(function(k){
+                  return encodeURIComponent(k)+'='+encodeURIComponent(data[k]);
+                }).join('&');
+                window.location.href = '/auth/telegram/callback?' + params;
+              }
+            );
+          }
+        </script>
         <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
         <a href="/" style="font-size:12px;color:var(--txt2)">← Back to home</a>
       </div>
@@ -1444,7 +1466,6 @@ app.get("/auth/telegram/callback", async (req, res) => {
   try {
     const data = { ...req.query };
     delete data.next;
-
     console.log("TG CALLBACK hit, keys:", Object.keys(data));
 
     if (!verifyTelegramAuth(data)) {
