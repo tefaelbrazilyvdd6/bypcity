@@ -46,7 +46,7 @@ app.use(helmet({
       imgSrc: ["'self'", "data:", "https:", "https://*.telegram.org", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      connectSrc: ["'self'", "https://telegram.org", "https://oauth.telegram.org"],
+      connectSrc: ["'self'", "https://telegram.org", "https://oauth.telegram.org", "https://*.telegram.org"],
     },
   },
 }));
@@ -1431,14 +1431,19 @@ app.get("/login", (req, res) => {
           <span style="font-size:11px;color:var(--txt3)">or</span>
           <div style="flex:1;height:1px;background:var(--brd)"></div>
         </div>
-        <div style="width:100%;display:flex;justify-content:center">
+        <div style="width:100%;display:flex;justify-content:center;background:transparent">
           <script async src="https://telegram.org/js/telegram-widget.js?22"
             data-telegram-login="BypassCityBot"
             data-size="large"
+            data-userpic="false"
+            data-radius="8"
             data-auth-url="https://bypass-city.lol/auth/telegram/callback"
             data-request-access="write">
           </script>
         </div>
+        <style>
+          iframe[src*="telegram.org"]{background:transparent!important;border:none!important;box-shadow:none!important}
+        </style>
         <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
         <a href="/" style="font-size:12px;color:var(--txt2)">← Back to home</a>
       </div>
@@ -1450,10 +1455,10 @@ app.get("/login", (req, res) => {
 app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
   try {
     const data = { ...req.query };
-    const next = safeRedirect(data.next || "/tools");
     delete data.next;
 
     if (!verifyTelegramAuth(data)) {
+      console.error("TG AUTH FAILED, data:", data);
       return res.redirect("/login?err=telegram_invalid");
     }
 
@@ -1468,12 +1473,17 @@ app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
     });
 
     const user = await getUser(id);
+    if (!user) {
+      console.error("TG: user not found after upsert, id:", id);
+      return res.redirect("/login?err=telegram_user_missing");
+    }
+
     req.logIn(user, (err) => {
       if (err) {
         console.error("TG LOGIN ERROR:", err);
         return res.redirect("/login?err=telegram_login_failed");
       }
-      res.redirect(next);
+      res.redirect("/tools");
     });
   } catch (e) {
     console.error("Telegram auth error:", e);
