@@ -19,8 +19,13 @@ await db.execute(`
 `);
 
 // Migrate existing table: add telegram_id column if it doesn't exist
+// NOTE: ALTER TABLE ADD COLUMN ... UNIQUE is invalid in SQLite/libSQL — add the
+// column first, then create the unique index separately.
 try {
-  await db.execute(`ALTER TABLE users ADD COLUMN telegram_id TEXT UNIQUE`);
+  await db.execute(`ALTER TABLE users ADD COLUMN telegram_id TEXT`);
+} catch (_) {}
+try {
+  await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_telegram_id ON users(telegram_id)`);
 } catch (_) {}
 // Also relax NOT NULL on google_id and email if already created
 try {
@@ -85,7 +90,8 @@ export async function upsertTelegramUser({ id, telegram_id, name, avatar }) {
   await db.execute({
     sql: `INSERT INTO users (id, telegram_id, name, avatar)
           VALUES (?, ?, ?, ?)
-          ON CONFLICT(telegram_id) DO UPDATE SET
+          ON CONFLICT(id) DO UPDATE SET
+            telegram_id=excluded.telegram_id,
             name=excluded.name, avatar=excluded.avatar`,
     args: [id, String(telegram_id), name, avatar || ""],
   });
