@@ -8,14 +8,24 @@ export const db = createClient({
 await db.execute(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
-    google_id TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
+    google_id TEXT UNIQUE,
+    telegram_id TEXT UNIQUE,
+    email TEXT,
     name TEXT,
     avatar TEXT,
     role TEXT NOT NULL DEFAULT 'user',
     created_at INTEGER DEFAULT (strftime('%s','now'))
   )
 `);
+
+// Migrate existing table: add telegram_id column if it doesn't exist
+try {
+  await db.execute(`ALTER TABLE users ADD COLUMN telegram_id TEXT UNIQUE`);
+} catch (_) {}
+// Also relax NOT NULL on google_id and email if already created
+try {
+  await db.execute(`ALTER TABLE users ADD COLUMN _migrated INTEGER DEFAULT 0`);
+} catch (_) {}
 
 await db.execute(`
   CREATE TABLE IF NOT EXISTS files (
@@ -56,6 +66,11 @@ export async function getUserByGoogle(google_id) {
   return r.rows[0] ?? null;
 }
 
+export async function getUserByTelegram(telegram_id) {
+  const r = await db.execute({ sql: `SELECT * FROM users WHERE telegram_id = ?`, args: [String(telegram_id)] });
+  return r.rows[0] ?? null;
+}
+
 export async function upsertUser({ id, google_id, email, name, avatar }) {
   await db.execute({
     sql: `INSERT INTO users (id, google_id, email, name, avatar)
@@ -63,6 +78,16 @@ export async function upsertUser({ id, google_id, email, name, avatar }) {
           ON CONFLICT(google_id) DO UPDATE SET
             email=excluded.email, name=excluded.name, avatar=excluded.avatar`,
     args: [id, google_id, email, name, avatar],
+  });
+}
+
+export async function upsertTelegramUser({ id, telegram_id, name, avatar }) {
+  await db.execute({
+    sql: `INSERT INTO users (id, telegram_id, name, avatar)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(telegram_id) DO UPDATE SET
+            name=excluded.name, avatar=excluded.avatar`,
+    args: [id, String(telegram_id), name, avatar || ""],
   });
 }
 
@@ -76,7 +101,6 @@ export async function listFiles(limit, offset) {
   return r.rows;
 }
 
-// Fixed: q and cat are separate params; cat="" means no category filter
 export async function searchFiles(q, cat, limit, offset) {
   const like = `%${q}%`;
   const r = await db.execute({
@@ -90,7 +114,6 @@ export async function searchFiles(q, cat, limit, offset) {
   return r.rows;
 }
 
-// Only published files (for users)
 export async function getFile(id) {
   const r = await db.execute({
     sql: `SELECT f.*, (SELECT COUNT(*) FROM downloads d WHERE d.file_id = f.id) as dl_count
@@ -100,7 +123,6 @@ export async function getFile(id) {
   return r.rows[0] ?? null;
 }
 
-// Any file regardless of published (for admin toggle/delete)
 export async function getFileAdmin(id) {
   const r = await db.execute({
     sql: `SELECT * FROM files WHERE id = ?`,
