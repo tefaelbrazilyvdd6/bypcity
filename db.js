@@ -87,13 +87,15 @@ export async function upsertUser({ id, google_id, email, name, avatar }) {
 }
 
 export async function upsertTelegramUser({ id, telegram_id, name, avatar }) {
+  // google_id and email may be NOT NULL in the live schema (created before Telegram
+  // support was added), so supply unique placeholders to satisfy the constraint.
   await db.execute({
-    sql: `INSERT INTO users (id, telegram_id, name, avatar)
-          VALUES (?, ?, ?, ?)
+    sql: `INSERT INTO users (id, telegram_id, google_id, email, name, avatar)
+          VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             telegram_id=excluded.telegram_id,
             name=excluded.name, avatar=excluded.avatar`,
-    args: [id, String(telegram_id), name, avatar || ""],
+    args: [id, String(telegram_id), `tg_${telegram_id}`, `tg_${telegram_id}@telegram`, name, avatar || ""],
   });
 }
 
