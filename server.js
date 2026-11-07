@@ -42,10 +42,11 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com", "https://fonts.googleapis.com", "https://telegram.org"],
-      frameSrc: ["https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
+      frameSrc: ["https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com", "https://telegram.org", "https://oauth.telegram.org"],
       imgSrc: ["'self'", "data:", "https:", "https://*.telegram.org", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://telegram.org"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      connectSrc: ["'self'", "https://telegram.org", "https://oauth.telegram.org"],
     },
   },
 }));
