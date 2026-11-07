@@ -10,17 +10,25 @@ services:
         value: production
       - key: PORT
         value: 3000
-      - key: DATA_DIR
-        value: /data
       - key: SESSION_SECRET
         generateValue: true
+      # Canonical public URL of this service (e.g. https://bypass-city.lol).
+      # Used to build the Telegram login widget's callback URL from a trusted
+      # value instead of client-controllable Host headers.
+      - key: APP_URL
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: GOOGLE_CALLBACK_URL
         sync: false
-      - key: NEXT_PUBLIC_TURNSTILE_SITE_KEY
+      # Email of the account that should always be treated as admin
+      # (in addition to any user whose role is set to 'admin' via
+      # make-admin.js). Referenced by server.js but was missing here before.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: TURNSTILE_SITE_KEY
         sync: false
       - key: TURNSTILE_SECRET_KEY
         sync: false
@@ -38,7 +46,9 @@ services:
         sync: false
       - key: TURSO_AUTH_TOKEN
         sync: false
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 5
+    # No persistent disk needed: file uploads live in Cloudinary and all
+    # app data (including sessions, as of this change) lives in Turso. The
+    # previous `disk`/DATA_DIR config was unused dead weight — DATA_DIR was
+    # never read anywhere in the code. If you already have a live disk
+    # attached on Render, remove it manually from the service's dashboard
+    # after deploying (render.yaml alone won't detach an existing disk).

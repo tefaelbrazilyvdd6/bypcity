@@ -61,6 +61,17 @@ await db.execute(`
   )
 `);
 
+// Persistent session store (replaces express-session's default in-memory
+// store, which is explicitly unsafe for production: it leaks memory and
+// loses every session on each restart/deploy).
+await db.execute(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    sid TEXT PRIMARY KEY,
+    sess TEXT NOT NULL,
+    expires INTEGER NOT NULL
+  )
+`);
+
 export async function getUser(id) {
   const r = await db.execute({ sql: `SELECT * FROM users WHERE id = ?`, args: [id] });
   return r.rows[0] ?? null;
@@ -97,6 +108,61 @@ export async function upsertTelegramUser({ id, telegram_id, name, avatar }) {
             name=excluded.name, avatar=excluded.avatar`,
     args: [id, String(telegram_id), `tg_${telegram_id}`, `tg_${telegram_id}@telegram`, name, avatar || ""],
   });
+}
+
+// Lets a signed-in user change their own display name from the profile page.
+// Does NOT touch email/google_id/telegram_id/role — identity and permissions
+// are never editable by the user themselves.
+export async function updateUserName(id, name) {
+  await db.execute({
+    sql: `UPDATE users SET name = ? WHERE id = ?`,
+    args: [name, id],
+  });
+}
+
+export async function getUserDownloads(user_id, limit = 20) {
+  const r = await db.execute({
+    sql: `SELECT d.id, d.created_at, f.id as file_id, f.name as file_name, f.category
+          FROM downloads d JOIN files f ON f.id = d.file_id
+          WHERE d.user_id = ?
+          ORDER BY d.created_at DESC LIMIT ?`,
+    args: [user_id, limit],
+  });
+  return r.rows;
+}
+
+export async function getUserDownloadCount(user_id) {
+  const r = await db.execute({
+    sql: `SELECT COUNT(*) as c FROM downloads WHERE user_id = ?`,
+    args: [user_id],
+  });
+  return r.rows[0]?.c ?? 0;
+}
+
+// ── Session store backing (used by session-store.js) ──────────
+export async function getSessionRow(sid) {
+  const r = await db.execute({ sql: `SELECT sess, expires FROM sessions WHERE sid = ?`, args: [sid] });
+  return r.rows[0] ?? null;
+}
+
+export async function setSessionRow(sid, sess, expires) {
+  await db.execute({
+    sql: `INSERT INTO sessions (sid, sess, expires) VALUES (?, ?, ?)
+          ON CONFLICT(sid) DO UPDATE SET sess=excluded.sess, expires=excluded.expires`,
+    args: [sid, sess, expires],
+  });
+}
+
+export async function touchSessionRow(sid, expires) {
+  await db.execute({ sql: `UPDATE sessions SET expires = ? WHERE sid = ?`, args: [expires, sid] });
+}
+
+export async function destroySessionRow(sid) {
+  await db.execute({ sql: `DELETE FROM sessions WHERE sid = ?`, args: [sid] });
+}
+
+export async function pruneExpiredSessions() {
+  await db.execute({ sql: `DELETE FROM sessions WHERE expires < ?`, args: [Date.now()] });
 }
 
 export async function listFiles(limit, offset) {

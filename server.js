@@ -6,7 +6,7 @@ import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import multer from "multer";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { randomUUID, createHash, createHmac } from "crypto";
+import { randomUUID, randomBytes, createHash, createHmac, timingSafeEqual } from "crypto";
 import { v2 as cloudinary } from "cloudinary";
 import streamifier from "streamifier";
 
@@ -14,8 +14,9 @@ import {
   getUser, getUserByGoogle, upsertUser, getUserByTelegram, upsertTelegramUser,
   listFiles, searchFiles, getFile, getAllFiles,
   insertFile, deleteFile, updateFile, logDownload, statsQuery,
-  getFileAdmin,
+  getFileAdmin, updateUserName, getUserDownloads, getUserDownloadCount,
 } from "./db.js";
+import { TursoSessionStore } from "./session-store.js";
 
 // ── Cloudinary config ────────────────────────────────────────
 cloudinary.config({
@@ -36,22 +37,44 @@ function isAdminUser(user) {
 
 // ── Security ────────────────────────────────────────────────
 app.set("trust proxy", 1);
-app.use(express.static("public"));
+// helmet MUST run before express.static: middleware only applies to
+// requests that reach it, and static previously ran first, so every static
+// asset (and 3rd-party embeds of them) was served with none of helmet's
+// security headers (CSP, X-Content-Type-Options, HSTS, etc).
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
   crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com", "https://fonts.googleapis.com", "https://telegram.org"],
-      frameSrc: ["https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com", "https://telegram.org", "https://oauth.telegram.org", "https://*.telegram.org"],
-      imgSrc: ["'self'", "data:", "https:", "https://*.telegram.org", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
+      // NOTE: previously this allowlisted several 3rd-party ad/popunder
+      // networks (hilltopads.com, unfoldedtrade.com, unfolded-uncle.com) in
+      // scriptSrc/frameSrc/imgSrc. That gives those networks full script
+      // execution in the same origin as logged-in sessions (including admin
+      // sessions) — a same-origin script can silently call admin endpoints
+      // (delete/upload/toggle) using the visitor's cookies, completely
+      // bypassing SameSite/CSRF protections, since it's not a cross-site
+      // request. Popunder ad networks are a common malvertising vector, so
+      // this is removed. See the file-by-file summary for details.
+      // 'unsafe-inline' is kept for scriptSrc because the page templates use
+      // inline <script> blocks and inline onclick/onsubmit handlers
+      // throughout (file cards, admin forms, etc). Removing it safely needs
+      // a nonce-based CSP plus rewriting every inline handler to
+      // addEventListener — a larger refactor out of scope here, called out
+      // separately in the summary as a recommended follow-up.
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://telegram.org"],
+      frameSrc: ["https://challenges.cloudflare.com", "https://telegram.org", "https://oauth.telegram.org", "https://*.telegram.org"],
+      imgSrc: ["'self'", "data:", "https://*.telegram.org", "https://t.me", "https://*.googleusercontent.com", "https://res.cloudinary.com"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       connectSrc: ["'self'", "https://telegram.org", "https://oauth.telegram.org", "https://*.telegram.org"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
     },
   },
 }));
+app.use(express.static("public"));
 
 // Stricter rate limits
 const limiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
@@ -69,6 +92,7 @@ if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET === "change-me-in-
   }
 }
 app.use(session({
+  store: new TursoSessionStore(),
   secret: process.env.SESSION_SECRET || "dev-only-secret-change-in-prod",
   resave: false,
   saveUninitialized: false,
@@ -79,6 +103,30 @@ app.use(session({
     sameSite: "lax",
   },
 }));
+
+// ── CSRF protection ─────────────────────────────────────────
+// SameSite=Lax cookies already block most cross-site POSTs, but admin
+// mutations (upload/delete/toggle) are destructive enough to warrant
+// defense in depth. Simple synchronizer-token pattern: a per-session token
+// is embedded in every state-changing form/fetch and checked on submit.
+function csrfToken(req) {
+  if (!req.session.csrfToken) req.session.csrfToken = randomBytes(32).toString("hex");
+  return req.session.csrfToken;
+}
+function csrfField(req) {
+  return `<input type="hidden" name="_csrf" value="${escHtml(csrfToken(req))}">`;
+}
+function requireCsrf(req, res, next) {
+  const sent = (req.body && req.body._csrf) || req.headers["x-csrf-token"];
+  const expected = req.session.csrfToken;
+  if (!expected || typeof sent !== "string") return res.status(403).json({ error: "Bad request" });
+  const a = Buffer.from(sent);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    return res.status(403).json({ error: "Bad request" });
+  }
+  next();
+}
 
 // ── Passport Google ──────────────────────────────────────────
 passport.use(new GoogleStrategy({
@@ -117,7 +165,9 @@ app.use(passport.session());
 // ── Auth middleware ──────────────────────────────────────────
 const requireAuth = (req, res, next) => {
   if (req.isAuthenticated()) return next();
-  res.redirect("/login?next=" + encodeURIComponent(req.path));
+  // req.originalUrl (not req.path) so query strings like ?q=... survive the
+  // round trip through login.
+  res.redirect("/login?next=" + encodeURIComponent(req.originalUrl));
 };
 const requireAdmin = (req, res, next) => {
   if (req.isAuthenticated() && isAdminUser(req.user)) return next();
@@ -143,6 +193,12 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_, file, cb) => {
+    // ALLOWED_MIMETYPES was declared but never actually enforced here before
+    // (the filter always accepted), so any content-type could be uploaded.
+    // Upload is admin-only, but still worth enforcing the stated allowlist.
+    if (!ALLOWED_MIMETYPES.has(file.mimetype)) {
+      return cb(new Error("UNSUPPORTED_FILE_TYPE"));
+    }
     cb(null, true);
   },
 });
@@ -195,31 +251,17 @@ function safeRedirect(url) {
 // PAGES — HTML inline
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const HILLTOP_AD = `<script>
-(function(gnnj){
-var d = document,
-    s = d.createElement('script'),
-    l = d.currentScript || d.scripts[d.scripts.length - 1];
-s.settings = gnnj || {};
-s.src = "\/\/unfoldedtrade.com\/bdXXV\/s.duGklk0\/YaWAcT\/DeimF9cu\/ZOU_lAkxPHTtc-1OOwTAYYyNM\/jbEEtGNDzdUh5\/Ntj\/IQyzN\/QK";
-s.async = true;
-s.referrerPolicy = 'no-referrer-when-downgrade';
-l.parentNode.insertBefore(s, l);
-})({})
-<\/script>`;
-
-const HILLTOP_POPUNDER = `<script>
-(function(hvt){
-var d = document,
-    s = d.createElement('script'),
-    l = d.currentScript || d.scripts[d.scripts.length - 1];
-s.settings = hvt || {};
-s.src = "\/\/unfolded-uncle.com\/ceD\/9.6\/bD2m5QlxSyW\/Qp9fNTzJU\/5lNmjHIS2\/MbS\/0w3PNRTSk\/2GMMjMY\/1q";
-s.async = true;
-s.referrerPolicy = 'no-referrer-when-downgrade';
-l.parentNode.insertBefore(s, l);
-})({})
-<\/script>`;
+// Third-party popunder/ad-network script tags used to be injected here
+// (unfoldedtrade.com, unfolded-uncle.com via hilltopads). They were removed:
+// granting a popunder ad network script execution in the same origin as
+// logged-in (including admin) sessions lets that network — or anyone who
+// compromises it — silently call authenticated endpoints (e.g. admin
+// delete/upload) using the visitor's live cookies. That's a full same-origin
+// takeover vector, not just an ads/privacy concern. If ad revenue is needed,
+// use a network that doesn't require broad script execution (e.g. a static
+// <img>-based ad unit), and never add its domain to scriptSrc in the CSP.
+const HILLTOP_AD = "";
+const HILLTOP_POPUNDER = "";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // DESIGN SYSTEM — Acid Lime × White × Black
@@ -1159,6 +1201,7 @@ function nav(user, activePage = "") {
     ? `<div class="mob-divider"></div>
        <div class="mob-btn-row">
          <a href="/tools" class="btn-dark">⚡ Tools</a>
+         <a href="/profile" class="btn-nav">👤 Profile</a>
          ${isAdminUser(user) ? `<a href="/admin" class="btn-nav">Admin</a>` : ""}
          <a href="/logout" class="btn-nav">Logout</a>
        </div>`
@@ -1186,7 +1229,7 @@ function nav(user, activePage = "") {
       </button>
       <a href="https://t.me/yocnd" target="_blank" rel="noopener noreferrer" class="btn-nav">✈ Telegram</a>
       ${user
-        ? `<a href="/tools" class="btn-dark">⚡ Tools</a>${isAdminUser(user)?`<a href="/admin" class="btn-nav">Admin</a>`:""}<a href="/logout" class="btn-nav">Logout</a>`
+        ? `<a href="/tools" class="btn-dark">⚡ Tools</a><a href="/profile" class="btn-nav" title="Profile">👤 Profile</a>${isAdminUser(user)?`<a href="/admin" class="btn-nav">Admin</a>`:""}<a href="/logout" class="btn-nav">Logout</a>`
         : `<a href="/login" class="btn-lime">Sign in</a>`}
     </div>
     <button class="nav-hamburger" id="nav-hbg" aria-label="Menu" aria-expanded="false">
@@ -1196,6 +1239,7 @@ function nav(user, activePage = "") {
   <div class="mobile-menu" id="mobile-menu">
     <a href="/" class="mob-link ${activePage==="home"?"active":""}">Home</a>
     <a href="/tools" class="mob-link ${activePage==="tools"?"active":""}">⚡ Tools</a>
+    ${user ? `<a href="/profile" class="mob-link ${activePage==="profile"?"active":""}">👤 Profile</a>` : ""}
     <a href="https://t.me/yocnd" target="_blank" rel="noopener noreferrer" class="mob-link">✈ Telegram</a>
     <a href="/" class="mob-link">About</a>
     ${mobileAuthLinks}
@@ -1386,21 +1430,39 @@ app.get("/", (req, res) => {
 // ── Telegram auth helper ─────────────────────────────────────
 function verifyTelegramAuth(data) {
   const botToken = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
-  if (!botToken) { console.error("TG: BOT TOKEN MISSING"); return false; }
+  if (!botToken) { console.error("TG: bot token missing"); return false; }
   const { hash, ...fields } = data;
-  if (!hash) { console.error("TG: no hash in data"); return false; }
+  if (!hash || typeof hash !== "string") return false;
   const age = Date.now() / 1000 - Number(fields.auth_date);
-  if (age > 86400) { console.error("TG: auth too old", age); return false; }
+  if (!Number.isFinite(age) || age > 86400 || age < 0) return false;
   const checkString = Object.keys(fields).sort().map(k => `${k}=${fields[k]}`).join("\n");
   const secretKey = createHash("sha256").update(botToken).digest();
   const hmac = createHmac("sha256", secretKey).update(checkString).digest("hex");
-  if (hmac !== hash) { console.error("TG: HMAC MISMATCH. Token prefix:", botToken.slice(0,10)); return false; }
-  return true;
+  // Timing-safe comparison: a plain `!==` check leaks how many leading bytes
+  // matched via response-time differences, which (however impractically)
+  // weakens the signature check. Buffers must be equal length first, or
+  // timingSafeEqual throws.
+  const a = Buffer.from(hmac, "hex");
+  const b = Buffer.from(hash, "hex");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+// Canonical origin for building absolute URLs (the Telegram login widget
+// requires one). Prefer an explicit APP_URL env var over trusting
+// req.protocol/req.get('host'), which are derived from client-controllable
+// headers (Host / X-Forwarded-Host) and — if the proxy chain were ever
+// misconfigured — could be used to point the widget's auth callback
+// somewhere other than this app.
+function appOrigin(req) {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, "");
+  return `${req.protocol}://${req.get("host")}`;
 }
 
 app.get("/login", (req, res) => {
   if (req.isAuthenticated()) return res.redirect("/tools");
   const next = safeRedirect(req.query.next);
+  req.session.returnTo = next;
   res.send(page("Sign in", `
     <div class="login-wrap">
       <div class="login-card">
@@ -1412,7 +1474,7 @@ app.get("/login", (req, res) => {
           <div class="login-title">Sign in to continue</div>
           <p class="login-sub">Choose how you want to sign in. Takes 5 seconds.</p>
         </div>
-        <a href="/auth/google?next=${encodeURIComponent(next)}" style="width:100%;display:flex;justify-content:center">
+        <a href="/auth/google" style="width:100%;display:flex;justify-content:center">
           <button class="g-btn">
             <div class="g-ic">G</div>
             Continue with Google
@@ -1427,7 +1489,7 @@ app.get("/login", (req, res) => {
           <script async src="https://telegram.org/js/telegram-widget.js?22"
             data-telegram-login="${escHtml(process.env.TELEGRAM_BOT_USERNAME || 'BypassCityBot')}"
             data-size="large"
-            data-auth-url="${escHtml(`${req.protocol}://${req.get('host')}/auth/telegram/callback`)}"
+            data-auth-url="${escHtml(`${appOrigin(req)}/auth/telegram/callback`)}"
             data-request-access="write">
           </script>
         </div>
@@ -1439,75 +1501,66 @@ app.get("/login", (req, res) => {
 });
 
 // TELEGRAM AUTH CALLBACK
-app.get("/auth/telegram/callback", async (req, res) => {
+app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
   const data = { ...req.query };
-  delete data.next;
-  console.log("TG CALLBACK keys:", Object.keys(data));
 
   // Step 1: verify signature
   if (!verifyTelegramAuth(data)) {
-    console.error("TG: verify failed");
     return res.redirect("/login?err=tg_verify_failed");
   }
 
-  // Step 2: look up existing user
-  let existing;
   try {
-    existing = await getUserByTelegram(data.id);
-  } catch (e) {
-    console.error("TG: getUserByTelegram threw:", e.message);
-    return res.redirect("/login?err=tg_read_failed&detail=" + encodeURIComponent(e.message));
-  }
+    // Step 2: look up existing user
+    const existing = await getUserByTelegram(data.id);
+    const id = existing?.id || randomUUID();
 
-  const id = existing?.id || randomUUID();
-
-  // Step 3: upsert
-  try {
+    // Step 3: upsert
     await upsertTelegramUser({
       id,
       telegram_id: data.id,
-      name: [data.first_name, data.last_name].filter(Boolean).join(" "),
-      avatar: data.photo_url || "",
+      name: [data.first_name, data.last_name].filter(Boolean).join(" ").slice(0, 200),
+      avatar: String(data.photo_url || "").slice(0, 2000),
+    });
+
+    // Step 4: fetch full user row
+    const user = await getUser(id);
+    if (!user) return res.redirect("/login?err=tg_no_user");
+
+    // Step 5: log in
+    req.logIn(user, (err) => {
+      if (err) {
+        console.error("TG login error:", err.message);
+        return res.redirect("/login?err=tg_login_failed");
+      }
+      // Regenerating would drop req.session.returnTo, so read it first.
+      const next = safeRedirect(req.session.returnTo);
+      delete req.session.returnTo;
+      res.redirect(next);
     });
   } catch (e) {
-    console.error("TG: upsertTelegramUser threw:", e.message);
-    return res.redirect("/login?err=tg_write_failed&detail=" + encodeURIComponent(e.message));
+    // Full error is logged server-side only — never put exception details
+    // in a redirect URL/query string, where they'd be visible to the
+    // browser, browser history, and any logging proxy in between.
+    console.error("Telegram auth error:", e);
+    res.redirect("/login?err=tg_error");
   }
-
-  // Step 4: fetch full user row
-  let user;
-  try {
-    user = await getUser(id);
-  } catch (e) {
-    console.error("TG: getUser threw:", e.message);
-    return res.redirect("/login?err=tg_getuser_failed&detail=" + encodeURIComponent(e.message));
-  }
-  if (!user) {
-    console.error("TG: user null after upsert");
-    return res.redirect("/login?err=tg_no_user");
-  }
-
-  // Step 5: log in
-  req.logIn(user, (err) => {
-    if (err) {
-      console.error("TG: req.logIn failed:", err);
-      return res.redirect("/login?err=tg_login_failed&detail=" + encodeURIComponent(err.message));
-    }
-    res.redirect("/tools");
-  });
 });
 
 // GOOGLE OAUTH
 app.get("/auth/google", authLimiter, (req, res, next) => {
-  const state = safeRedirect(req.query.next);
-  passport.authenticate("google", { scope: ["profile", "email"], state })(req, res, next);
+  // `state` here is left to passport/the strategy's own CSRF nonce handling
+  // (not overridden with the redirect target) — see passport.authenticate
+  // below. The post-login destination travels via the session instead,
+  // consistent with the Telegram flow.
+  req.session.returnTo = safeRedirect(req.query.next || req.session.returnTo);
+  passport.authenticate("google", { scope: ["profile", "email"], state: true })(req, res, next);
 });
 
 app.get("/auth/google/callback", authLimiter,
   (req, res, next) => {
-    passport.authenticate("google", (err, user) => {
+    passport.authenticate("google", { state: true }, (err, user) => {
       if (err) {
-        console.error("OAUTH ERROR:", err);
+        console.error("OAuth error:", err.message);
         return res.redirect("/login?err=auth-failed");
       }
       if (!user) {
@@ -1515,10 +1568,11 @@ app.get("/auth/google/callback", authLimiter,
       }
       req.logIn(user, (loginErr) => {
         if (loginErr) {
-          console.error("LOGIN ERROR:", loginErr);
+          console.error("Login error:", loginErr.message);
           return res.redirect("/login?err=login-failed");
         }
-        const next = safeRedirect(req.query.state);
+        const next = safeRedirect(req.session.returnTo);
+        delete req.session.returnTo;
         res.redirect(next);
       });
     })(req, res, next);
@@ -1527,6 +1581,109 @@ app.get("/auth/google/callback", authLimiter,
 
 app.get("/logout", (req, res) => {
   req.logout(() => res.redirect("/"));
+});
+
+// ── PROFILE ───────────────────────────────────────────────────
+app.get("/profile", requireAuth, async (req, res) => {
+  try {
+    const user = req.user;
+    const authMethod = user.telegram_id ? "Telegram" : "Google";
+    const avatarHtml = user.avatar
+      ? `<img src="${escHtml(user.avatar)}" alt="" class="profile-avatar" referrerpolicy="no-referrer">`
+      : `<div class="profile-avatar profile-avatar-fallback">${escHtml((user.name || "?").trim().charAt(0).toUpperCase() || "?")}</div>`;
+
+    const downloads = await getUserDownloads(user.id, 20);
+    const dlCount = await getUserDownloadCount(user.id);
+
+    const dlRows = downloads.length
+      ? downloads.map(d => `
+        <div class="file-row">
+          <div class="fc-icon ${catClass(d.category)}" style="width:32px;height:32px;font-size:12px;flex-shrink:0">${catIcon(d.category)}</div>
+          <a href="/tools/${escHtml(d.file_id)}" class="file-row-name" style="color:var(--txt);font-weight:600">${escHtml(d.file_name)}</a>
+          <span class="file-row-size">${timeAgo(d.created_at)}</span>
+        </div>`).join("")
+      : `<div style="padding:28px;text-align:center;color:var(--txt3);font-size:13px">No downloads yet</div>`;
+
+    const saved = req.query.saved === "1";
+    const err = req.query.err;
+    const errMsg = {
+      "name-required": "Display name can't be empty.",
+      "name-too-long": "Display name must be 100 characters or fewer.",
+      "bad-request": "Something went wrong — please try again.",
+    }[err];
+
+    res.send(page("Profile", `
+      <div class="card-wrap">
+        <div class="card">
+          <div class="card-header" style="align-items:center">
+            ${avatarHtml}
+            <div style="flex:1;min-width:0">
+              <h2>${escHtml(user.name || "Unnamed user")}</h2>
+              <div class="card-meta-row">
+                <span class="fc-cat ${isAdminUser(user) ? "bot" : "other"}">${isAdminUser(user) ? "ADMIN" : "MEMBER"}</span>
+                <span>Signed in with ${authMethod}</span>
+                <span>Joined ${timeAgo(user.created_at)}</span>
+              </div>
+            </div>
+          </div>
+
+          ${saved ? `<div class="profile-notice profile-notice-ok">✓ Profile updated</div>` : ""}
+          ${errMsg ? `<div class="profile-notice profile-notice-err">${escHtml(errMsg)}</div>` : ""}
+
+          <div class="divider"></div>
+
+          <form method="POST" action="/profile" class="profile-form">
+            ${csrfField(req)}
+            <label class="profile-label" for="name">Display name</label>
+            <input type="text" id="name" name="name" value="${escHtml(user.name || "")}" maxlength="100" required>
+            ${user.email && !user.email.endsWith("@telegram") ? `
+              <label class="profile-label" for="email">Email</label>
+              <input type="text" id="email" value="${escHtml(user.email)}" disabled>
+              <p style="font-size:12px;color:var(--txt3);margin-top:-8px">Managed by your Google account and can't be changed here.</p>
+            ` : ""}
+            <button type="submit" class="a-upload-btn" style="align-self:flex-start">Save changes</button>
+          </form>
+
+          <div class="divider"></div>
+
+          <div class="card-meta-row" style="margin-bottom:4px">
+            <strong style="color:var(--txt)">Download history</strong>
+            <span>${dlCount} total</span>
+          </div>
+          <div class="files-block" style="border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
+            ${dlRows}
+          </div>
+        </div>
+      </div>
+      <style>
+        .profile-avatar{width:56px;height:56px;border-radius:50%;object-fit:cover;flex-shrink:0}
+        .profile-avatar-fallback{display:flex;align-items:center;justify-content:center;background:var(--dark);color:var(--lime);font-weight:900;font-size:22px}
+        .profile-form{display:flex;flex-direction:column;gap:10px;max-width:380px}
+        .profile-label{font-size:12px;font-weight:700;color:var(--txt2)}
+        .profile-form input{padding:10px 12px;border:1px solid var(--border2);border-radius:var(--radius-sm);font-size:14px}
+        .profile-form input:disabled{background:var(--surface);color:var(--txt3)}
+        .profile-notice{padding:10px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:600;margin-top:12px}
+        .profile-notice-ok{background:var(--lime-bg);color:var(--dark);border:1px solid var(--lime-border)}
+        .profile-notice-err{background:#fef2f2;color:var(--red);border:1px solid #fecaca}
+      </style>
+    `, req.user, "profile"));
+  } catch (e) {
+    console.error(e);
+    res.status(500).send(page("Error", `<p style="padding:40px;color:var(--red)">Something went wrong</p>`, req.user));
+  }
+});
+
+app.post("/profile", requireAuth, requireCsrf, async (req, res) => {
+  try {
+    const name = (req.body.name || "").trim();
+    if (!name) return res.redirect("/profile?err=name-required");
+    if (name.length > 100) return res.redirect("/profile?err=name-too-long");
+    await updateUserName(req.user.id, name);
+    res.redirect("/profile?saved=1");
+  } catch (e) {
+    console.error(e);
+    res.redirect("/profile?err=bad-request");
+  }
 });
 
 // TOOLS
@@ -1616,7 +1773,7 @@ app.get("/tools/:id", requireAuth, async (req, res) => {
 
     const tags = JSON.parse(f.tags || "[]");
     const tagHtml = tags.map(t => `<span class="tag">${escHtml(t)}</span>`).join("");
-    const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || "1x00000000000000000000AA";
+    const siteKey = process.env.TURNSTILE_SITE_KEY || "1x00000000000000000000AA";
     const dcc = catClass(f.category);
 
     res.send(page(f.name, `
@@ -1663,6 +1820,7 @@ app.get("/tools/:id", requireAuth, async (req, res) => {
         let cfToken = "";
         const FILE_ID = ${escJs(f.id)};
         const FILE_NAME = ${escJs(f.name)};
+        const CSRF_TOKEN = ${escJs(csrfToken(req))};
         window.onload = () => {
           if(typeof turnstile !== "undefined") {
             turnstile.render("#cf-widget", {
@@ -1684,7 +1842,7 @@ app.get("/tools/:id", requireAuth, async (req, res) => {
           try {
             const r = await fetch("/api/download/" + FILE_ID, {
               method: "POST",
-              headers: {"Content-Type":"application/json"},
+              headers: {"Content-Type":"application/json", "X-CSRF-Token": CSRF_TOKEN},
               body: JSON.stringify({token: cfToken})
             });
             if (!r.ok) {
@@ -1720,7 +1878,7 @@ app.get("/tools/:id", requireAuth, async (req, res) => {
 });
 
 // DOWNLOAD API — proxy file from Cloudinary
-app.post("/api/download/:id", dlLimiter, requireAuth, async (req, res) => {
+app.post("/api/download/:id", dlLimiter, requireAuth, requireCsrf, async (req, res) => {
   try {
     const { token } = req.body;
     const ip = getIp(req);
@@ -1763,9 +1921,11 @@ app.get("/admin", requireAdmin, async (req, res) => {
         <span class="file-row-name">${escHtml(f.name)}</span>
         <span class="file-row-size">${fmtSize(f.size)}</span>
         <form method="POST" action="/admin/toggle/${escHtml(f.id)}" style="margin:0;flex-shrink:0">
+          ${csrfField(req)}
           <button type="submit" class="btn-tog ${f.published?"on":""}">${f.published?"LIVE":"DRAFT"}</button>
         </form>
         <form method="POST" action="/admin/delete/${escHtml(f.id)}" onsubmit="return confirm('Delete this file?')" style="margin:0;flex-shrink:0">
+          ${csrfField(req)}
           <button type="submit" class="btn-del">Delete</button>
         </form>
       </div>`).join("");
@@ -1795,6 +1955,7 @@ app.get("/admin", requireAdmin, async (req, res) => {
           <div class="up-block">
             <div class="a-section-lbl">Upload file</div>
             <form method="POST" action="/admin/upload" enctype="multipart/form-data" id="upload-form">
+              ${csrfField(req)}
               <label class="up-zone" id="up-zone-label">
                 <input type="file" name="file" id="fi" required>
                 <div class="up-zone-inner">
@@ -1845,9 +2006,18 @@ app.get("/admin", requireAdmin, async (req, res) => {
 });
 
 // UPLOAD
-app.post("/admin/upload", requireAdmin, upload.single("file"), async (req, res) => {
+app.post("/admin/upload", requireAdmin, requireCsrf, (req, res, next) => {
+  upload.single("file")(req, res, (err) => {
+    if (err) {
+      console.error("Upload rejected:", err.message);
+      return res.redirect("/admin?err=upload-failed");
+    }
+    next();
+  });
+}, async (req, res) => {
   if (!req.file) return res.redirect("/admin?err=no-file");
   const { name, description, category, tags } = req.body;
+  if (!name || !name.trim()) return res.redirect("/admin?err=name-required");
 
   const VALID_CATS = ["SOURCE","SCRIPT","TOOL","BOT","OTHER"];
   const safeCategory = VALID_CATS.includes(category) ? category : "OTHER";
@@ -1875,7 +2045,7 @@ app.post("/admin/upload", requireAdmin, upload.single("file"), async (req, res) 
 });
 
 // DELETE
-app.post("/admin/delete/:id", requireAdmin, async (req, res) => {
+app.post("/admin/delete/:id", requireAdmin, requireCsrf, async (req, res) => {
   try {
     const f = await getFileAdmin(req.params.id);
     if (f) {
@@ -1893,7 +2063,7 @@ app.post("/admin/delete/:id", requireAdmin, async (req, res) => {
 });
 
 // TOGGLE
-app.post("/admin/toggle/:id", requireAdmin, async (req, res) => {
+app.post("/admin/toggle/:id", requireAdmin, requireCsrf, async (req, res) => {
   try {
     const f = await getFileAdmin(req.params.id);
     if (f) await updateFile({ ...f, tags: f.tags || "[]", published: f.published ? 0 : 1 });
