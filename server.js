@@ -1383,15 +1383,17 @@ app.get("/", (req, res) => {
 // LOGIN
 // ── Telegram auth helper ─────────────────────────────────────
 function verifyTelegramAuth(data) {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (!botToken) return false;
+  const botToken = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
+  if (!botToken) { console.error("TG: TELEGRAM_BOT_TOKEN missing"); return false; }
   const { hash, ...fields } = data;
-  if (!hash) return false;
-  if (Date.now() / 1000 - Number(fields.auth_date) > 86400) return false;
+  if (!hash) { console.error("TG: no hash in data"); return false; }
+  const age = Date.now() / 1000 - Number(fields.auth_date);
+  if (age > 86400) { console.error("TG: auth too old", age); return false; }
   const checkString = Object.keys(fields).sort().map(k => `${k}=${fields[k]}`).join("\n");
   const secretKey = createHash("sha256").update(botToken).digest();
   const hmac = createHmac("sha256", secretKey).update(checkString).digest("hex");
-  return hmac === hash;
+  if (hmac !== hash) { console.error("TG: hmac mismatch, token starts:", botToken.slice(0,8)); return false; }
+  return true;
 }
 
 app.get("/login", (req, res) => {
@@ -1442,53 +1444,40 @@ app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
     const data = { ...req.query };
     delete data.next;
 
-    const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    const hasBotToken = !!botToken;
-    const tokenPreview = botToken ? botToken.slice(0, 10) + "..." : "MISSING";
+    console.log("TG CALLBACK received, fields:", Object.keys(data), "has hash:", !!data.hash);
 
-    // Recompute hash for debug
-    const { hash, ...fields } = data;
-    const checkString = Object.keys(fields).sort().map(k => `${k}=${fields[k]}`).join("\n");
-    const secretKey = createHash("sha256").update(botToken || "").digest();
-    const computedHmac = createHmac("sha256", secretKey).update(checkString).digest("hex");
-    const hashMatch = computedHmac === hash;
-    const authAge = Date.now() / 1000 - Number(fields.auth_date);
-
-    console.log("TG CALLBACK:", { hasBotToken, tokenPreview, hashMatch, authAge, fields: Object.keys(fields), hash: hash?.slice(0,10) });
-
-    if (!hasBotToken) {
-      return res.send(`<pre>ERROR: TELEGRAM_BOT_TOKEN is not set in environment</pre>`);
-    }
-    if (!hashMatch) {
-      return res.send(`<pre>ERROR: Hash mismatch\nComputed: ${computedHmac}\nReceived: ${hash}\nCheck string:\n${checkString}\nToken starts with: ${tokenPreview}</pre>`);
-    }
-    if (authAge > 86400) {
-      return res.send(`<pre>ERROR: Auth too old (${Math.round(authAge)}s)</pre>`);
+    if (!verifyTelegramAuth(data)) {
+      return res.redirect("/login?err=tg_verify_failed");
     }
 
     const existing = await getUserByTelegram(data.id);
     const id = existing?.id || randomUUID();
+    console.log("TG: upserting user, id:", id, "tg_id:", data.id);
 
     await upsertTelegramUser({
       id,
-      telegram_id: fields.id,
-      name: [fields.first_name, fields.last_name].filter(Boolean).join(" "),
-      avatar: fields.photo_url || "",
+      telegram_id: data.id,
+      name: [data.first_name, data.last_name].filter(Boolean).join(" "),
+      avatar: data.photo_url || "",
     });
 
     const user = await getUser(id);
-    if (!user) return res.send(`<pre>ERROR: user not found after upsert, id=${id}</pre>`);
+    if (!user) {
+      console.error("TG: user null after upsert");
+      return res.redirect("/login?err=tg_no_user");
+    }
 
     req.logIn(user, (err) => {
       if (err) {
         console.error("TG LOGIN ERROR:", err);
-        return res.send(`<pre>ERROR: logIn failed: ${err.message}</pre>`);
+        return res.redirect("/login?err=tg_login_failed");
       }
+      console.log("TG: login success, redirecting to /tools");
       res.redirect("/tools");
     });
   } catch (e) {
-    console.error("Telegram auth error:", e);
-    res.send(`<pre>ERROR: ${e.message}\n${e.stack}</pre>`);
+    console.error("TG auth error:", e.message, e.stack);
+    res.redirect("/login?err=tg_exception");
   }
 });
 
