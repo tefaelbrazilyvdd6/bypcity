@@ -1423,39 +1423,10 @@ app.get("/login", (req, res) => {
           <span style="font-size:11px;color:var(--txt3)">or</span>
           <div style="flex:1;height:1px;background:var(--border)"></div>
         </div>
-        <div aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
-          <script async src="https://telegram.org/js/telegram-widget.js?22"
-            data-telegram-login="${escHtml(process.env.TELEGRAM_BOT_USERNAME || 'BypassCityBot')}"
-            data-size="small"
-            data-request-access="write"
-            data-onauth="__tgAuthDone(user)">
-          </script>
-        </div>
-        <button class="g-btn" id="tg-login-btn" style="background:#2AABEE;border:none;width:100%;max-width:300px" onclick="__tgLogin()">
+        <a href="https://oauth.telegram.org/auth?bot_id=${encodeURIComponent((process.env.TELEGRAM_BOT_TOKEN||'').split(':')[0])}&origin=${encodeURIComponent(`${req.protocol}://${req.get('host')}`)}&return_to=${encodeURIComponent(`${req.protocol}://${req.get('host')}/auth/telegram/callback`)}&request_access=write" class="g-btn" style="background:#2AABEE;border:none;width:100%;max-width:300px;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:11px">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="white" style="flex-shrink:0"><path d="M12 0C5.37 0 0 5.37 0 12s5.37 12 12 12 12-5.37 12-12S18.63 0 12 0zm5.94 8.19-2.02 9.52c-.15.67-.54.84-1.08.52l-3-2.21-1.44 1.39c-.16.16-.3.3-.61.3l.21-3.03 5.52-4.99c.24-.21-.05-.33-.37-.12l-6.82 4.3-2.94-.92c-.64-.2-.65-.64.13-.95l11.49-4.43c.53-.19 1 .13.83.62z"/></svg>
           Log in with Telegram
-        </button>
-        <script>
-          function __tgAuthDone(user) {
-            if (!user) return;
-            window.location.href = '${`${req.protocol}://${req.get('host')}/auth/telegram/callback`}?' + new URLSearchParams(user).toString();
-          }
-          function __tgLogin() {
-            var btn = document.getElementById('tg-login-btn');
-            if (!window.Telegram || !window.Telegram.Login) {
-              btn.textContent = 'Loading…';
-              var t = setInterval(function() {
-                if (window.Telegram && window.Telegram.Login) {
-                  clearInterval(t);
-                  btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="white" style="flex-shrink:0"><path d="M12 0C5.37 0 0 5.37 0 12s5.37 12 12 12 12-5.37 12-12S18.63 0 12 0zm5.94 8.19-2.02 9.52c-.15.67-.54.84-1.08.52l-3-2.21-1.44 1.39c-.16.16-.3.3-.61.3l.21-3.03 5.52-4.99c.24-.21-.05-.33-.37-.12l-6.82 4.3-2.94-.92c-.64-.2-.65-.64.13-.95l11.49-4.43c.53-.19 1 .13.83.62z"/></svg> Log in with Telegram';
-                  __tgLogin();
-                }
-              }, 150);
-              return;
-            }
-            Telegram.Login.auth({ bot_id: '${(process.env.TELEGRAM_BOT_TOKEN || '').split(':')[0]}', request_access: 'write' }, __tgAuthDone);
-          }
-        </script>
+        </a>
         <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
         <a href="/" style="font-size:12px;color:var(--txt2)">← Back to home</a>
       </div>
