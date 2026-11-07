@@ -1384,15 +1384,15 @@ app.get("/", (req, res) => {
 // ── Telegram auth helper ─────────────────────────────────────
 function verifyTelegramAuth(data) {
   const botToken = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
-  if (!botToken) { console.error("TG: TELEGRAM_BOT_TOKEN missing"); return false; }
+  if (!botToken) { console.error("TG: BOT TOKEN MISSING"); return false; }
   const { hash, ...fields } = data;
-  if (!hash) { console.error("TG: no hash in data"); return false; }
+  if (!hash) { console.error("TG: no hash"); return false; }
   const age = Date.now() / 1000 - Number(fields.auth_date);
-  if (age > 86400) { console.error("TG: auth too old", age); return false; }
+  if (age > 86400) { console.error("TG: too old", age); return false; }
   const checkString = Object.keys(fields).sort().map(k => `${k}=${fields[k]}`).join("\n");
   const secretKey = createHash("sha256").update(botToken).digest();
   const hmac = createHmac("sha256", secretKey).update(checkString).digest("hex");
-  if (hmac !== hash) { console.error("TG: hmac mismatch, token starts:", botToken.slice(0,8)); return false; }
+  if (hmac !== hash) { console.error("TG: HMAC MISMATCH. Token prefix:", botToken.slice(0,10)); return false; }
   return true;
 }
 
@@ -1431,6 +1431,7 @@ app.get("/login", (req, res) => {
             data-request-access="write">
           </script>
         </div>
+        ${req.query.err ? `<p style="font-size:12px;color:var(--red);font-weight:600">Error: ${escHtml(req.query.err)}</p>` : ""}
         <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
         <a href="/" style="font-size:12px;color:var(--txt2)">← Back to home</a>
       </div>
@@ -1439,12 +1440,12 @@ app.get("/login", (req, res) => {
 });
 
 // TELEGRAM AUTH CALLBACK
-app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
+app.get("/auth/telegram/callback", async (req, res) => {
   try {
     const data = { ...req.query };
     delete data.next;
 
-    console.log("TG CALLBACK received, fields:", Object.keys(data), "has hash:", !!data.hash);
+    console.log("TG CALLBACK hit, keys:", Object.keys(data));
 
     if (!verifyTelegramAuth(data)) {
       return res.redirect("/login?err=tg_verify_failed");
@@ -1452,7 +1453,6 @@ app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
 
     const existing = await getUserByTelegram(data.id);
     const id = existing?.id || randomUUID();
-    console.log("TG: upserting user, id:", id, "tg_id:", data.id);
 
     await upsertTelegramUser({
       id,
@@ -1472,11 +1472,10 @@ app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
         console.error("TG LOGIN ERROR:", err);
         return res.redirect("/login?err=tg_login_failed");
       }
-      console.log("TG: login success, redirecting to /tools");
       res.redirect("/tools");
     });
   } catch (e) {
-    console.error("TG auth error:", e.message, e.stack);
+    console.error("TG auth exception:", e.message);
     res.redirect("/login?err=tg_exception");
   }
 });
