@@ -1423,14 +1423,31 @@ app.get("/login", (req, res) => {
           <span style="font-size:11px;color:var(--txt3)">or</span>
           <div style="flex:1;height:1px;background:var(--border)"></div>
         </div>
-        <div id="tg-widget-wrap" style="width:100%;display:flex;justify-content:center;min-height:48px">
-          <script async src="https://telegram.org/js/telegram-widget.js?22"
-            data-telegram-login="${escHtml(process.env.TELEGRAM_BOT_USERNAME || 'BypassCityBot')}"
-            data-size="large"
-            data-auth-url="${escHtml(`${req.protocol}://${req.get('host')}/auth/telegram/callback`)}"
-            data-request-access="write">
-          </script>
-        </div>
+        <button class="g-btn" id="tg-login-btn" style="background:#2AABEE;border:none;max-width:300px;width:100%" onclick="doTgLogin()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-2.018 9.52c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.881.701z" fill="white"/></svg>
+          Log in with Telegram
+        </button>
+        <script async src="https://telegram.org/js/telegram-widget.js?22"></script>
+        <script>
+          function doTgLogin() {
+            var btn = document.getElementById('tg-login-btn');
+            if (!window.Telegram || !window.Telegram.Login) {
+              btn.textContent = 'Loading…';
+              var t = setInterval(function() {
+                if (window.Telegram && window.Telegram.Login) {
+                  clearInterval(t);
+                  btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-2.018 9.52c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.881.701z" fill="white"/></svg> Log in with Telegram';
+                  doTgLogin();
+                }
+              }, 200);
+              return;
+            }
+            Telegram.Login.auth({ bot_id: '${(process.env.TELEGRAM_BOT_TOKEN || '').split(':')[0]}', request_access: 'write' }, function(user) {
+              if (!user) return;
+              window.location.href = '${`${req.protocol}://${req.get('host')}/auth/telegram/callback`}?' + new URLSearchParams(user).toString();
+            });
+          }
+        </script>
         <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
         <a href="/" style="font-size:12px;color:var(--txt2)">← Back to home</a>
       </div>
