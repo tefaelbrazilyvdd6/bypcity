@@ -6,12 +6,12 @@ import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import multer from "multer";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash, createHmac } from "crypto";
 import { v2 as cloudinary } from "cloudinary";
 import streamifier from "streamifier";
 
 import {
-  getUser, getUserByGoogle, upsertUser,
+  getUser, getUserByGoogle, upsertUser, getUserByTelegram, upsertTelegramUser,
   listFiles, searchFiles, getFile, getAllFiles,
   insertFile, deleteFile, updateFile, logDownload, statsQuery,
   getFileAdmin,
@@ -41,10 +41,10 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com", "https://fonts.googleapis.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com", "https://fonts.googleapis.com", "https://telegram.org"],
       frameSrc: ["https://challenges.cloudflare.com", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
-      imgSrc: ["'self'", "data:", "https:", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "https:", "https://*.telegram.org", "https://hilltopads.com", "https://*.hilltopads.com", "https://unfoldedtrade.com", "https://unfolded-uncle.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://telegram.org"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
     },
   },
@@ -1392,6 +1392,19 @@ app.get("/", (req, res) => {
 });
 
 // LOGIN
+// ── Telegram auth helper ─────────────────────────────────────
+function verifyTelegramAuth(data) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) return false;
+  const { hash, ...fields } = data;
+  if (!hash) return false;
+  if (Date.now() / 1000 - Number(fields.auth_date) > 86400) return false;
+  const checkString = Object.keys(fields).sort().map(k => `${k}=${fields[k]}`).join("\n");
+  const secretKey = createHash("sha256").update(botToken).digest();
+  const hmac = createHmac("sha256", secretKey).update(checkString).digest("hex");
+  return hmac === hash;
+}
+
 app.get("/login", (req, res) => {
   if (req.isAuthenticated()) return res.redirect("/tools");
   const next = safeRedirect(req.query.next);
@@ -1404,7 +1417,7 @@ app.get("/login", (req, res) => {
         </div>
         <div>
           <div class="login-title">Sign in to continue</div>
-          <p class="login-sub">Google account required to access tools. Takes 5 seconds.</p>
+          <p class="login-sub">Choose how you want to sign in. Takes 5 seconds.</p>
         </div>
         <a href="/auth/google?next=${encodeURIComponent(next)}" style="width:100%;display:flex;justify-content:center">
           <button class="g-btn">
@@ -1412,11 +1425,59 @@ app.get("/login", (req, res) => {
             Continue with Google
           </button>
         </a>
-        <p style="font-size:11px;color:var(--txt3)">🔒 We only read your email address. No spam.</p>
+        <div style="display:flex;align-items:center;gap:10px;width:100%;margin:4px 0">
+          <div style="flex:1;height:1px;background:var(--brd)"></div>
+          <span style="font-size:11px;color:var(--txt3)">or</span>
+          <div style="flex:1;height:1px;background:var(--brd)"></div>
+        </div>
+        <div style="width:100%;display:flex;justify-content:center">
+          <script async src="https://telegram.org/js/telegram-widget.js?22"
+            data-telegram-login="BypassCityBot"
+            data-size="large"
+            data-auth-url="https://bypass-city.lol/auth/telegram/callback?next=${encodeURIComponent(next)}"
+            data-request-access="write">
+          </script>
+        </div>
+        <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
         <a href="/" style="font-size:12px;color:var(--txt2)">← Back to home</a>
       </div>
     </div>
   `));
+});
+
+// TELEGRAM AUTH CALLBACK
+app.get("/auth/telegram/callback", authLimiter, async (req, res) => {
+  try {
+    const data = { ...req.query };
+    const next = safeRedirect(data.next || "/tools");
+    delete data.next;
+
+    if (!verifyTelegramAuth(data)) {
+      return res.redirect("/login?err=telegram_invalid");
+    }
+
+    const existing = await getUserByTelegram(data.id);
+    const id = existing?.id || randomUUID();
+
+    await upsertTelegramUser({
+      id,
+      telegram_id: data.id,
+      name: [data.first_name, data.last_name].filter(Boolean).join(" "),
+      avatar: data.photo_url || "",
+    });
+
+    const user = await getUser(id);
+    req.logIn(user, (err) => {
+      if (err) {
+        console.error("TG LOGIN ERROR:", err);
+        return res.redirect("/login?err=telegram_login_failed");
+      }
+      res.redirect(next);
+    });
+  } catch (e) {
+    console.error("Telegram auth error:", e);
+    res.redirect("/login?err=telegram_error");
+  }
 });
 
 // GOOGLE OAUTH
