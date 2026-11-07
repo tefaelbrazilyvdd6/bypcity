@@ -991,7 +991,7 @@ select{padding:10px 14px;cursor:pointer}
   display:flex;
   align-items:center;
   justify-content:center;
-  background:var(--bg);
+  background:var(--surface);
   padding:16px;
 }
 .login-card{
@@ -1419,24 +1419,16 @@ app.get("/login", (req, res) => {
           <span style="font-size:11px;color:var(--txt3)">or</span>
           <div style="flex:1;height:1px;background:var(--brd)"></div>
         </div>
-        <div style="width:100%;display:flex;justify-content:center">
+        <div style="width:100%;max-width:300px;border-radius:8px;overflow:hidden;line-height:0">
           <script async src="https://telegram.org/js/telegram-widget.js?22"
             data-telegram-login="BypassCityBot"
             data-size="large"
-            data-userpic="false"
+            data-userpic="true"
             data-radius="8"
-            data-onauth="onTelegramAuth(user)"
+            data-auth-url="https://bypass-city.lol/auth/telegram/callback"
             data-request-access="write">
           </script>
         </div>
-        <script>
-          function onTelegramAuth(user) {
-            var params = Object.keys(user).map(function(k){
-              return encodeURIComponent(k)+'='+encodeURIComponent(user[k]);
-            }).join('&');
-            window.location.href = '/auth/telegram/callback?' + params;
-          }
-        </script>
         <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
         <a href="/" style="font-size:12px;color:var(--txt2)">← Back to home</a>
       </div>
