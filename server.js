@@ -987,6 +987,10 @@ select{padding:10px 14px;cursor:pointer}
 }
 .a-upload-btn:hover{background:var(--dark2)}
 
+/* ── Telegram widget iframe fix ── */
+#tg-widget-wrap{overflow:hidden;background:var(--bg)}
+#tg-widget-wrap iframe{border-radius:var(--radius-sm)!important;display:block!important}
+
 /* ── Login ── */
 .login-wrap{
   min-height:calc(100vh - 60px);
@@ -1423,7 +1427,7 @@ app.get("/login", (req, res) => {
           <span style="font-size:11px;color:var(--txt3)">or</span>
           <div style="flex:1;height:1px;background:var(--border)"></div>
         </div>
-        <div id="tg-widget-wrap" style="width:100%;display:flex;justify-content:center;overflow:hidden;background:var(--bg);border-radius:var(--radius-sm);height:52px">
+        <div id="tg-widget-wrap" style="width:100%;display:flex;justify-content:center">
           <script async src="https://telegram.org/js/telegram-widget.js?22"
             data-telegram-login="${escHtml(process.env.TELEGRAM_BOT_USERNAME || 'BypassCityBot')}"
             data-size="large"
