@@ -1421,37 +1421,17 @@ app.get("/login", (req, res) => {
           <span style="font-size:11px;color:var(--txt3)">or</span>
           <div style="flex:1;height:1px;background:var(--border)"></div>
         </div>
-        <div style="width:100%;display:flex;justify-content:center">
-          <button id="tg-btn" onclick="doTelegramLogin()" style="display:flex;align-items:center;gap:11px;background:#2AABEE;color:#fff;border:none;padding:14px 24px;font-size:14px;font-weight:700;cursor:pointer;width:100%;max-width:300px;justify-content:center;border-radius:8px;transition:background .15s;letter-spacing:-.01em">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L8.48 14.617l-2.95-.924c-.642-.204-.657-.643.136-.953l11.527-4.448c.535-.194 1.003.131.37.956z"/></svg>
-            Continue with Telegram
-          </button>
+        <div id="tg-widget-wrap" style="width:100%;display:flex;justify-content:center;min-height:48px">
+          <script async src="https://telegram.org/js/telegram-widget.js?22"
+            data-telegram-login="${escHtml(process.env.TELEGRAM_BOT_USERNAME || 'BypassCityBot')}"
+            data-size="large"
+            data-onauth="onTelegramAuth(user)"
+            data-request-access="write">
+          </script>
         </div>
-        <script src="https://telegram.org/js/telegram-widget.js?22" async></script>
         <script>
-          function doTelegramLogin() {
-            var btn = document.getElementById('tg-btn');
-            btn.disabled = true;
-            btn.textContent = 'Opening Telegram...';
-            if (!window.Telegram || !window.Telegram.Login) {
-              setTimeout(doTelegramLogin, 500);
-              return;
-            }
-            window.Telegram.Login.auth(
-              { bot_id: '${((process.env.TELEGRAM_BOT_TOKEN || "").trim().split(":")[0])}', request_access: true },
-              function(data) {
-                if (!data) {
-                  btn.disabled = false;
-                  btn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248-1.97 9.289c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L8.48 14.617l-2.95-.924c-.642-.204-.657-.643.136-.953l11.527-4.448c.535-.194 1.003.131.37.956z"/></svg> Continue with Telegram';
-                  alert('Telegram auth failed or was cancelled');
-                  return;
-                }
-                var params = Object.keys(data).map(function(k){
-                  return encodeURIComponent(k)+'='+encodeURIComponent(data[k]);
-                }).join('&');
-                window.location.href = '/auth/telegram/callback?' + params;
-              }
-            );
+          function onTelegramAuth(user) {
+            window.location.href = '/auth/telegram/callback?' + new URLSearchParams(user).toString();
           }
         </script>
         <p style="font-size:11px;color:var(--txt3)">🔒 We only read your basic profile. No spam.</p>
