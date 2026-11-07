@@ -994,7 +994,7 @@ select{padding:10px 14px;cursor:pointer}
   content:'';
   position:absolute;
   left:0;right:0;
-  height:6px;
+  height:12px;
   background:var(--bg);
   z-index:10;
   pointer-events:none;
