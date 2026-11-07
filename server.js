@@ -1440,42 +1440,61 @@ app.get("/login", (req, res) => {
 
 // TELEGRAM AUTH CALLBACK
 app.get("/auth/telegram/callback", async (req, res) => {
+  const data = { ...req.query };
+  delete data.next;
+  console.log("TG CALLBACK keys:", Object.keys(data));
+
+  // Step 1: verify signature
+  if (!verifyTelegramAuth(data)) {
+    console.error("TG: verify failed");
+    return res.redirect("/login?err=tg_verify_failed");
+  }
+
+  // Step 2: look up existing user
+  let existing;
   try {
-    const data = { ...req.query };
-    delete data.next;
-    console.log("TG CALLBACK hit, keys:", Object.keys(data));
+    existing = await getUserByTelegram(data.id);
+  } catch (e) {
+    console.error("TG: getUserByTelegram threw:", e.message);
+    return res.redirect("/login?err=tg_read_failed&detail=" + encodeURIComponent(e.message));
+  }
 
-    if (!verifyTelegramAuth(data)) {
-      return res.redirect("/login?err=tg_verify_failed");
-    }
+  const id = existing?.id || randomUUID();
 
-    const existing = await getUserByTelegram(data.id);
-    const id = existing?.id || randomUUID();
-
+  // Step 3: upsert
+  try {
     await upsertTelegramUser({
       id,
       telegram_id: data.id,
       name: [data.first_name, data.last_name].filter(Boolean).join(" "),
       avatar: data.photo_url || "",
     });
-
-    const user = await getUser(id);
-    if (!user) {
-      console.error("TG: user null after upsert");
-      return res.redirect("/login?err=tg_no_user");
-    }
-
-    req.logIn(user, (err) => {
-      if (err) {
-        console.error("TG LOGIN ERROR:", err);
-        return res.redirect("/login?err=tg_login_failed");
-      }
-      res.redirect("/tools");
-    });
   } catch (e) {
-    console.error("TG auth exception:", e.message);
-    res.redirect("/login?err=tg_exception");
+    console.error("TG: upsertTelegramUser threw:", e.message);
+    return res.redirect("/login?err=tg_write_failed&detail=" + encodeURIComponent(e.message));
   }
+
+  // Step 4: fetch full user row
+  let user;
+  try {
+    user = await getUser(id);
+  } catch (e) {
+    console.error("TG: getUser threw:", e.message);
+    return res.redirect("/login?err=tg_getuser_failed&detail=" + encodeURIComponent(e.message));
+  }
+  if (!user) {
+    console.error("TG: user null after upsert");
+    return res.redirect("/login?err=tg_no_user");
+  }
+
+  // Step 5: log in
+  req.logIn(user, (err) => {
+    if (err) {
+      console.error("TG: req.logIn failed:", err);
+      return res.redirect("/login?err=tg_login_failed&detail=" + encodeURIComponent(err.message));
+    }
+    res.redirect("/tools");
+  });
 });
 
 // GOOGLE OAUTH
